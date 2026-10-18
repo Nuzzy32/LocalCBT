@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Form, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import Connection, text
 
-from app.auth import CurrentUser, require_roles
+from app.auth import CurrentUser, User, require_roles
 from app.config import settings
 from app.db import DB
 from app.errors import ApiError, not_found
@@ -78,8 +78,8 @@ def media_path(sha256: str) -> str:
 
 
 def media_readable(db: Connection, user_id: UUID, media_id: UUID) -> bool:
-    # Pengunggah, atau guru yang bisa melihat bank tempat gambar dipakai.
-    # M5: tambah OR untuk siswa yang snapshot ujiannya memakai gambar ini.
+    # Pengunggah, guru yang bisa melihat bank/ujian pemakai, atau siswa yang punya attempt
+    # di ujian yang snapshot-nya memakai gambar ini.
     return bool(
         db.scalar(
             text(f"""
@@ -92,7 +92,11 @@ def media_readable(db: Connection, user_id: UUID, media_id: UUID) -> bool:
                          where s.media_asset_id = m.id and s.bank_id in ({VISIBLE_BANKS}))
               or exists (select 1 from exam_question_snapshots x join exams e on e.id = x.exam_id
                          where m.id in (x.media_asset_id, x.stimulus_media_asset_id)
-                           and e.author_teacher_id = :uid))
+                           and e.author_teacher_id = :uid)
+              or exists (select 1 from exam_question_snapshots x
+                         join exam_attempts a on a.exam_id = x.exam_id
+                         where m.id in (x.media_asset_id, x.stimulus_media_asset_id)
+                           and a.student_id = :uid))
             """),  # noqa: S608 — fragmen konstan, bukan input
             {"id": media_id, "uid": user_id},
         )
@@ -159,7 +163,7 @@ def upload_media(
 
 
 @router.get("/{media_id}")
-def get_media(media_id: UUID, user: Teacher, db: DB) -> FileResponse:
+def get_media(media_id: UUID, user: User, db: DB) -> FileResponse:
     if not media_readable(db, user.id, media_id):
         raise not_found()
     row = db.execute(

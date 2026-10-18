@@ -23,6 +23,7 @@ from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.attempts import token_limiter  # noqa: E402
 from app.auth import hash_password, limiter  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import engine  # noqa: E402
@@ -46,12 +47,14 @@ def _database() -> None:
 @pytest.fixture(autouse=True)
 def _clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     limiter.reset()
+    token_limiter.reset()
     monkeypatch.setattr(settings, "media_dir", tmp_path / "media")
     yield
     with engine.begin() as conn:
         conn.execute(
             text("""
-            truncate exam_question_snapshots, exam_assignments, exams,
+            truncate question_scores, student_answers, exam_attempts,
+              exam_question_snapshots, exam_assignments, exams,
               question_statements, question_options, questions, stimuli, media_assets,
               bank_shares, question_banks, import_jobs, teaching_assignments, subjects,
               class_memberships, classes,

@@ -143,7 +143,7 @@ def to_student_question(q: dict[str, Any]) -> dict[str, Any]:
         "id": q["id"],
         "type": q["type"],
         "stem": q["stem"],
-        "weight": q["weight"],
+        "weight": float(q["weight"]),
         "stimulus_id": q["stimulus_id"],
         "stimulus": q["stimulus"],
         "stimulus_image_url": q["stimulus_image_url"],

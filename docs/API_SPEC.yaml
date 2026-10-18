@@ -700,7 +700,10 @@ paths:
   /student/attempts/{attemptId}/answers/{questionId}:
     put:
       tags: [Student Attempts]
-      summary: Upsert jawaban, mark for review, dan server ACK
+      summary: |
+        Upsert jawaban + tanda review; ACK setelah commit. client_revision harus lebih besar dari
+        yang tersimpan (409 REVISION_CONFLICT). Idempotency-Key sama + isi sama = tanda terima sama;
+        isi berbeda = 409 IDEMPOTENCY_KEY_REUSED. Lewat batas waktu server = 409 ATTEMPT_LOCKED.
       operationId: saveStudentAnswer
       x-roles: [STUDENT]
       parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/QuestionId'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
@@ -771,7 +774,9 @@ paths:
   /student/attempts/{attemptId}/result:
     get:
       tags: [Results]
-      summary: Nilai siswa hanya bila teacher policy mengizinkan
+      summary: |
+        Nilai hanya bila GRADED dan (IMMEDIATE, atau AFTER_PUBLICATION dengan
+        exams.results_published_at sudah lewat); selain itu 403 RESULT_HIDDEN.
       operationId: getStudentResult
       x-roles: [STUDENT]
       parameters: [{$ref: '#/components/parameters/AttemptId'}]
@@ -786,7 +791,10 @@ paths:
   /student/attempts/{attemptId}/review:
     get:
       tags: [Results]
-      summary: Review pascaujian sesuai izin guru, tidak otomatis ada setelah submit
+      summary: |
+        Pembahasan sesuai izin guru: review_enabled, available_from lewat, DAN ujian sudah usai untuk
+        semua peserta (window_until + durasi) agar kunci tidak bocor ke yang masih mengerjakan.
+        correct_answer hanya bila show_correct_answers; earned hanya bila nilai boleh dilihat.
       operationId: getStudentReview
       x-roles: [STUDENT]
       parameters: [{$ref: '#/components/parameters/AttemptId'}]
@@ -1440,8 +1448,12 @@ components:
       properties:
         id: {$ref: '#/components/schemas/Id'}
         title: {type: string}
-        status: {type: string, enum: [SCHEDULED, AVAILABLE, IN_PROGRESS, COMPLETED]}
+        status: {type: string, enum: [SCHEDULED, AVAILABLE, IN_PROGRESS, COMPLETED, CLOSED]}
         duration_seconds: {type: integer}
+        subject_name: {type: string}
+        start_window_from: {type: string, format: date-time}
+        start_window_until: {type: string, format: date-time}
+        attempt_id: {type: [string, 'null'], description: Ada bila siswa sudah mulai; lanjut tanpa token}
     StudentQuestion:
       type: object
       description: Sanitized published snapshot, no is_correct/correct_value or answer key fields
@@ -1477,6 +1489,7 @@ components:
       properties:
         server_now: {type: string, format: date-time}
         state: {type: string, enum: [IN_PROGRESS, PAUSED, SUBMITTED, GRADED]}
+        deadline_at: {type: string, format: date-time}
         remaining_seconds: {type: integer, minimum: 0}
         pause_consumed_seconds: {type: integer, minimum: 0, maximum: 600}
         incident_pause_seconds: {type: integer, minimum: 0, maximum: 300}
@@ -1488,8 +1501,12 @@ components:
         exam_id: {$ref: '#/components/schemas/Id'}
         state: {type: string, enum: [IN_PROGRESS, PAUSED, SUBMITTED, GRADED]}
         timer: {$ref: '#/components/schemas/TimerStatus'}
+        exam_title: {type: string}
+        submitted_at: {type: [string, 'null'], format: date-time}
+        receipt_id: {type: [string, 'null']}
         questions:
           type: array
+          description: Urutan acak per peserta; kosong setelah dikumpulkan (perangkat bersama)
           items: {$ref: '#/components/schemas/StudentQuestion'}
         answers:
           type: array
@@ -1504,6 +1521,7 @@ components:
             - {$ref: '#/components/schemas/AnswerPayload'}
             - {type: 'null'}
         server_revision: {type: integer, minimum: 0}
+        client_revision: {type: integer, description: Revisi klien terakhir yang diterima; kirim lebih besar}
         saved_at: {type: string, format: date-time}
         marked_for_review: {type: boolean}
     AnswerPayload:

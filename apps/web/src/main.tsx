@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Admin } from "./Admin";
 import { ApiError, api, type Me, ROLE_HOME, setCsrf } from "./api";
 import { Login } from "./Login";
+import { StudentPage } from "./Student";
 import { TeacherPage } from "./Teacher";
 import "./tokens.css";
 
@@ -92,6 +93,10 @@ function App() {
 		setMe(null);
 	}
 
+	// Layar mengerjakan ujian: tanpa menu/tombol keluar, fokus pada soal (UI_UX S-04).
+	if (/^\/student\/attempts\/[^/]+$/.test(path))
+		return <StudentPage path={path} />;
+
 	return (
 		<>
 			<header className="topbar">
@@ -109,6 +114,8 @@ function App() {
 					<Admin />
 				) : section(path) === "/teacher" ? (
 					<TeacherPage path={path} />
+				) : section(path) === "/student" ? (
+					<StudentPage path={path} />
 				) : (
 					<p className="muted">
 						Halo, {me.display_name}. Fitur halaman ini menyusul di milestone

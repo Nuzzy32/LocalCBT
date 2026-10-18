@@ -43,19 +43,69 @@ export const TYPE_LABEL: Record<QType, string> = {
 	MULTIPLE_CHOICE: "Pilihan Ganda Kompleks",
 	CATEGORY_CHOICE: "Benar/Salah per Pernyataan",
 };
-const LETTER = "ABCDEFGHIJ";
+export const LETTER = "ABCDEFGHIJ";
 
-/** Tampilan soal seperti di layar siswa (tanpa kunci). Dipakai pratinjau guru dan ujian (M5). */
+export type Answer =
+	| { type: "SINGLE_CHOICE"; selected_option_id: string }
+	| { type: "MULTIPLE_CHOICE"; selected_option_ids: string[] }
+	| {
+			type: "CATEGORY_CHOICE";
+			choices: { statement_id: string; value: boolean }[];
+	  };
+
+/** Tampilan soal seperti di layar siswa (tanpa kunci). Dipakai pratinjau guru, ujian, dan
+ * pembahasan. Terkontrol bila `onChange`/`disabled` diberikan; tanpa itu (pratinjau) bebas. */
 export function StudentQuestionView({
 	q,
 	number,
 	total,
+	value,
+	onChange,
+	disabled = false,
 }: {
 	q: StudentQuestion;
 	number: number;
 	total: number;
+	value?: Answer | null;
+	onChange?: (answer: Answer | null) => void;
+	disabled?: boolean;
 }) {
 	const name = useId();
+	const controlled = onChange !== undefined || disabled;
+	const selected =
+		value?.type === "SINGLE_CHOICE"
+			? [value.selected_option_id]
+			: value?.type === "MULTIPLE_CHOICE"
+				? value.selected_option_ids
+				: [];
+	const choices =
+		value?.type === "CATEGORY_CHOICE"
+			? Object.fromEntries(value.choices.map((c) => [c.statement_id, c.value]))
+			: {};
+	const checked = (on: boolean) => (controlled ? on : undefined);
+
+	function pickOption(id: string, on: boolean) {
+		if (q.type === "SINGLE_CHOICE") {
+			onChange?.({ type: "SINGLE_CHOICE", selected_option_id: id });
+			return;
+		}
+		const ids = on ? [...selected, id] : selected.filter((x) => x !== id);
+		onChange?.(
+			ids.length ? { type: "MULTIPLE_CHOICE", selected_option_ids: ids } : null,
+		);
+	}
+
+	function pickStatement(id: string, v: boolean) {
+		const next = { ...choices, [id]: v };
+		onChange?.({
+			type: "CATEGORY_CHOICE",
+			choices: Object.entries(next).map(([statement_id, val]) => ({
+				statement_id,
+				value: val,
+			})),
+		});
+	}
+
 	return (
 		<article className="card stack question">
 			<h3>
@@ -74,19 +124,24 @@ export function StudentQuestionView({
 			{q.type === "CATEGORY_CHOICE" ? (
 				<div className="stack">
 					{q.statements.map((s) => (
-						<fieldset key={s.id} className="statement">
+						<fieldset key={s.id} className="statement" disabled={disabled}>
 							<legend>{s.text}</legend>
-							<label className="choice">
-								<input type="radio" name={`${name}-${s.id}`} /> Benar
-							</label>
-							<label className="choice">
-								<input type="radio" name={`${name}-${s.id}`} /> Salah
-							</label>
+							{[true, false].map((v) => (
+								<label key={String(v)} className="choice">
+									<input
+										type="radio"
+										name={`${name}-${s.id}`}
+										checked={checked(choices[s.id] === v)}
+										onChange={() => pickStatement(s.id, v)}
+									/>{" "}
+									{v ? "Benar" : "Salah"}
+								</label>
+							))}
 						</fieldset>
 					))}
 				</div>
 			) : (
-				<fieldset className="stack">
+				<fieldset className="stack" disabled={disabled}>
 					<legend className="muted">
 						{q.type === "MULTIPLE_CHOICE"
 							? "Pilih semua jawaban yang benar."
@@ -97,6 +152,8 @@ export function StudentQuestionView({
 							<input
 								type={q.type === "MULTIPLE_CHOICE" ? "checkbox" : "radio"}
 								name={name}
+								checked={checked(selected.includes(o.id))}
+								onChange={(e) => pickOption(o.id, e.target.checked)}
 							/>
 							<span>
 								{LETTER[i]}. {o.text}

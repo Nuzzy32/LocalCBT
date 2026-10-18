@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
-from app import admin, auth, exams, media, question_import, questions
+from app import admin, attempts, auth, exams, media, question_import, questions
 from app.config import settings
 from app.db import database_ok
 from app.errors import ApiError
@@ -58,6 +58,7 @@ app.include_router(questions.router)
 app.include_router(question_import.router)
 app.include_router(media.router)
 app.include_router(exams.router)
+app.include_router(attempts.router)
 
 
 def error_response(

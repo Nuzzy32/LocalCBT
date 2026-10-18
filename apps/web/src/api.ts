@@ -25,9 +25,17 @@ export function setCsrf(token: string) {
 
 export async function api<T>(
 	path: string,
-	init: { method?: string; json?: unknown; form?: FormData } = {},
+	init: {
+		method?: string;
+		json?: unknown;
+		form?: FormData;
+		headers?: Record<string, string>;
+	} = {},
 ): Promise<T> {
-	const headers: Record<string, string> = { "X-CSRF-Token": csrfToken };
+	const headers: Record<string, string> = {
+		"X-CSRF-Token": csrfToken,
+		...init.headers,
+	};
 	let body: BodyInit | undefined;
 	if (init.json !== undefined) {
 		headers["Content-Type"] = "application/json";

@@ -3,6 +3,7 @@
 :root {
 	--brand-600: #155e75;
 	--brand-700: #164e63;
+	--brand-50: #ecfeff;
 	--text-primary: #0f172a;
 	--text-secondary: #475569;
 	--surface: #ffffff;
@@ -474,4 +475,191 @@ legend {
 }
 .dialog::backdrop {
 	background: rgb(15 23 42 / 50%);
+}
+
+/* ---- Layar ujian siswa (UI_UX S-04) ---- */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+.rules {
+	margin: 0;
+	padding-left: var(--space-6);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+.warn {
+	color: var(--warning);
+	font-weight: 600;
+}
+.score {
+	font-size: 20px;
+	margin: 0;
+}
+.exam {
+	min-height: 100dvh;
+	display: flex;
+	flex-direction: column;
+}
+.exam-header {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-4);
+	padding: var(--space-2) var(--space-4);
+	background: var(--surface);
+	border-bottom: 1px solid var(--border);
+}
+.exam-title {
+	flex: 1 1 200px;
+}
+.timer {
+	font-variant-numeric: tabular-nums;
+	font-weight: 700;
+	font-size: 18px;
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-control);
+	border: 1px solid var(--border);
+}
+.timer-low {
+	color: var(--warning);
+	border-color: currentColor;
+}
+.timer-critical {
+	color: var(--danger);
+	border-color: currentColor;
+}
+.save {
+	font-size: 14px;
+	flex-basis: 100%;
+}
+.save-saved {
+	color: var(--success);
+}
+.save-saving {
+	color: var(--text-secondary);
+}
+.save-failed {
+	color: var(--danger);
+	font-weight: 600;
+}
+.exam-body {
+	flex: 1;
+	display: flex;
+	gap: var(--space-6);
+	max-width: 1280px;
+	width: 100%;
+	margin: 0 auto;
+	padding: var(--space-4);
+	box-sizing: border-box;
+}
+.exam-main {
+	flex: 1;
+	max-width: 760px;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+	outline: none;
+	padding-bottom: 88px;
+}
+.exam-actions {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+.exam-side {
+	display: none;
+}
+.exam-bottom {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-4)
+		calc(var(--space-2) + env(safe-area-inset-bottom));
+	background: var(--surface);
+	border-top: 1px solid var(--border);
+}
+.exam-bottom .btn {
+	flex: 1;
+}
+.navigator ol {
+	list-style: none;
+	padding: 0;
+	margin: var(--space-2) 0;
+	display: grid;
+	grid-template-columns: repeat(5, 44px);
+	gap: var(--space-2);
+}
+.nav-num {
+	position: relative;
+	width: 44px;
+	height: 44px;
+	font: inherit;
+	font-weight: 600;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	color: var(--text-primary);
+	cursor: pointer;
+}
+.nav-num.answered {
+	background: var(--brand-50);
+	border-color: var(--brand-600);
+	color: var(--brand-700);
+}
+.nav-num.sample {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	vertical-align: middle;
+}
+.nav-num[aria-current="step"] {
+	outline: 3px solid var(--brand-600);
+	outline-offset: 1px;
+}
+.nav-num span {
+	position: absolute;
+	top: -6px;
+	right: -4px;
+	font-size: 12px;
+	color: var(--warning);
+}
+.legend {
+	font-size: 12px;
+}
+.sheet {
+	margin-bottom: 0;
+	width: min(100%, 420px);
+}
+@media (min-width: 1024px) {
+	.exam-side {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-4);
+		width: 280px;
+		position: sticky;
+		top: 96px;
+		align-self: flex-start;
+	}
+	.exam-bottom {
+		display: none;
+	}
+	.exam-main {
+		padding-bottom: var(--space-8);
+	}
+	.save {
+		flex-basis: auto;
+	}
+}
+.save-empty {
+	color: var(--text-secondary);
 }

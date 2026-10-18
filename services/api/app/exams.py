@@ -376,7 +376,8 @@ def unpublish_exam(exam_id: UUID, user: Teacher, db: DB) -> dict[str, Any]:
         raise ApiError(
             409, "EXAM_STARTED", "Ujian yang sudah dibuka atau masih draft tidak bisa ditarik."
         )
-    # M5: tambahkan syarat belum ada attempt.
+    if db.scalar(text("select 1 from exam_attempts where exam_id = :id limit 1"), {"id": exam_id}):
+        raise ApiError(409, "EXAM_STARTED", "Sudah ada siswa yang mulai; ujian tidak bisa ditarik.")
     db.execute(text("delete from exam_question_snapshots where exam_id = :id"), {"id": exam_id})
     db.execute(
         text("""
@@ -388,16 +389,19 @@ def unpublish_exam(exam_id: UUID, user: Teacher, db: DB) -> dict[str, Any]:
     return exam_out(get_exam(db, user, exam_id))
 
 
-def load_snapshot(db: Connection, exam_id: UUID) -> list[dict[str, Any]]:
+def load_snapshot(
+    db: Connection, exam_id: UUID, question_id: UUID | None = None
+) -> list[dict[str, Any]]:
     """Soal ujian beku DENGAN kunci (staf/grading). Untuk siswa lewat to_student_question.
     Bentuknya juga memenuhi masukan scoring.permute/validate_answer/score."""
     rows = db.execute(
         text("""
         select id, question_type, stem, weight, media_asset_id, stimulus_media_asset_id,
                stimulus_payload, options_payload, statements_payload, answer_key
-        from exam_question_snapshots where exam_id = :e order by ordinal
+        from exam_question_snapshots
+        where exam_id = :e and (cast(:q as uuid) is null or id = :q) order by ordinal
         """),
-        {"e": exam_id},
+        {"e": exam_id, "q": question_id},
     ).mappings()
     out = []
     for r in rows:
