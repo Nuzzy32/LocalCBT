@@ -30,6 +30,7 @@ export async function api<T>(
 		json?: unknown;
 		form?: FormData;
 		headers?: Record<string, string>;
+		timeoutMs?: number;
 	} = {},
 ): Promise<T> {
 	const headers: Record<string, string> = {
@@ -50,6 +51,8 @@ export async function api<T>(
 			headers,
 			body,
 			credentials: "same-origin",
+			// Tanpa batas waktu, fetch di jaringan mati bisa menggantung selamanya.
+			signal: AbortSignal.timeout(init.timeoutMs ?? 10000),
 		});
 	} catch {
 		throw new ApiError(

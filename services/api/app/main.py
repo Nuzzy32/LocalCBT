@@ -3,7 +3,8 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,7 +15,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
-from app import admin, attempts, auth, exams, media, question_import, questions
+from app import (
+    admin,
+    attempts,
+    auth,
+    exams,
+    media,
+    proctor,
+    question_import,
+    questions,
+    sweeper,
+)
 from app.config import settings
 from app.db import database_ok
 from app.errors import ApiError
@@ -43,7 +54,19 @@ handler.setFormatter(JsonFormatter())
 logging.basicConfig(level=settings.log_level, handlers=[handler], force=True)
 log = logging.getLogger("localcbt.api")
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    worker = sweeper.Sweeper() if settings.sweeper_enabled else None
+    if worker:
+        worker.start()
+    yield
+    if worker:
+        worker.stop()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="LocalCBT API",
     version="0.1.0",
     docs_url="/api/v1/docs",
@@ -59,6 +82,7 @@ app.include_router(question_import.router)
 app.include_router(media.router)
 app.include_router(exams.router)
 app.include_router(attempts.router)
+app.include_router(proctor.router)
 
 
 def error_response(

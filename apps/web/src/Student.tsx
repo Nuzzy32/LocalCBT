@@ -6,6 +6,7 @@ import {
 	useState,
 } from "react";
 import { ApiError, api } from "./api";
+import { queueAll, queueClear, queueDelete, queuePut } from "./offlineQueue";
 import {
 	type Answer,
 	LETTER,
@@ -13,6 +14,9 @@ import {
 	StudentQuestionView,
 } from "./QuestionEditor";
 import { Alert, message, navigate } from "./ui";
+
+const LATE_FLAG = "localcbt.lateAnswers";
+const HEARTBEAT_MS = 5000;
 
 type ExamItem = {
 	id: string;
@@ -24,7 +28,13 @@ type ExamItem = {
 	status: "SCHEDULED" | "AVAILABLE" | "IN_PROGRESS" | "COMPLETED" | "CLOSED";
 	attempt_id: string | null;
 };
-type Timer = { state: string; remaining_seconds: number; server_now: string };
+type Timer = {
+	state: string;
+	remaining_seconds: number;
+	server_now: string;
+	pause_allowance_seconds: number;
+	heartbeat_timeout_seconds: number;
+};
 type SavedAnswer = {
 	question_id: string;
 	answer: Answer | null;
@@ -287,7 +297,8 @@ type Local = {
 	answer: Answer | null;
 	marked: boolean;
 	rev: number;
-	status: "saved" | "saving" | "failed";
+	// queued = tersimpan di perangkat, belum tersinkron (jaringan putus)
+	status: "saved" | "saving" | "queued" | "failed";
 	savedAt?: string;
 	error?: string;
 };
@@ -299,20 +310,58 @@ function isAnswered(a: Answer | null | undefined) {
 	return true;
 }
 
+type Clock = {
+	left: number;
+	offline: boolean;
+	frozen: boolean;
+	capReached: boolean;
+};
+
 function useServerTimer(
 	attemptId: string,
 	initial: Timer | undefined,
 	onEnd: () => void,
-) {
-	// Hitung mundur lokal hanya untuk tampilan; patokannya selalu sisa waktu dari server.
-	const base = useRef({ remaining: 0, at: 0 });
-	const [left, setLeft] = useState(0);
+): Clock {
+	// Hitung mundur lokal hanya untuk tampilan; patokannya sisa waktu dari server. Saat offline,
+	// klien meniru jeda server: setelah heartbeat_timeout, waktu dibekukan selama jatah jeda.
+	const base = useRef({ remaining: 0, at: 0, allowance: 0, timeout: 15 });
+	const failures = useRef(0);
 	const ending = useRef(false);
+	const [clock, setClock] = useState<Clock>({
+		left: 0,
+		offline: false,
+		frozen: false,
+		capReached: false,
+	});
 
-	const sync = useCallback((t: Timer) => {
-		base.current = { remaining: t.remaining_seconds, at: performance.now() };
-		setLeft(t.remaining_seconds);
+	const compute = useCallback((): Clock => {
+		const b = base.current;
+		const elapsed = (performance.now() - b.at) / 1000;
+		const offline = failures.current >= 2;
+		const frozenFor = offline
+			? Math.min(Math.max(0, elapsed - b.timeout), b.allowance)
+			: 0;
+		return {
+			left: Math.max(0, Math.ceil(b.remaining - (elapsed - frozenFor))),
+			offline,
+			frozen: offline && elapsed > b.timeout && frozenFor < b.allowance,
+			capReached: offline && elapsed > b.timeout && frozenFor >= b.allowance,
+		};
 	}, []);
+
+	const sync = useCallback(
+		(t: Timer) => {
+			failures.current = 0;
+			base.current = {
+				remaining: t.remaining_seconds,
+				at: performance.now(),
+				allowance: t.pause_allowance_seconds,
+				timeout: t.heartbeat_timeout_seconds,
+			};
+			setClock(compute());
+		},
+		[compute],
+	);
 
 	useEffect(() => {
 		if (initial) sync(initial);
@@ -322,46 +371,49 @@ function useServerTimer(
 		try {
 			const t = await api<Timer>(`/student/attempts/${attemptId}/heartbeat`, {
 				json: { tab_visible: document.visibilityState === "visible" },
+				timeoutMs: 4000,
 			});
 			if (t.state !== "IN_PROGRESS" && t.state !== "PAUSED") onEnd();
 			else sync(t);
 		} catch {
-			// Jaringan putus: tetap hitung mundur lokal; server tetap sumber kebenaran.
+			failures.current += 1;
+			setClock(compute());
 		}
-	}, [attemptId, onEnd, sync]);
+	}, [attemptId, onEnd, sync, compute]);
 
 	useEffect(() => {
 		const tick = setInterval(() => {
-			const value = Math.max(
-				0,
-				Math.ceil(
-					base.current.remaining - (performance.now() - base.current.at) / 1000,
-				),
-			);
-			setLeft(value);
-			if (value === 0 && !ending.current) {
+			const next = compute();
+			setClock(next);
+			if (next.left === 0 && !next.offline && !ending.current) {
 				ending.current = true;
 				heartbeat().finally(() => {
 					ending.current = false;
 				});
 			}
 		}, 1000);
-		const beat = setInterval(heartbeat, 30000);
+		const beat = setInterval(heartbeat, HEARTBEAT_MS);
 		return () => {
 			clearInterval(tick);
 			clearInterval(beat);
 		};
-	}, [heartbeat]);
+	}, [heartbeat, compute]);
 
-	return left;
+	return clock;
 }
 
-function TimerBadge({ seconds }: { seconds: number }) {
+function TimerBadge({ seconds, frozen }: { seconds: number; frozen: boolean }) {
 	const h = Math.floor(seconds / 3600);
 	const m = Math.floor((seconds % 3600) / 60);
 	const s = seconds % 60;
 	const text = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-	const level = seconds <= 60 ? "critical" : seconds <= 600 ? "low" : "normal";
+	const level = frozen
+		? "paused"
+		: seconds <= 60
+			? "critical"
+			: seconds <= 600
+				? "low"
+				: "normal";
 	const announce =
 		seconds === 600
 			? "Sisa waktu 10 menit."
@@ -373,7 +425,9 @@ function TimerBadge({ seconds }: { seconds: number }) {
 	return (
 		<span className={`timer timer-${level}`}>
 			<span className="sr-only">Sisa waktu </span>
+			{frozen && <span aria-hidden="true">⏸ </span>}
 			{text}
+			{frozen && <span className="sr-only"> (waktu dijeda)</span>}
 			<span className="sr-only" aria-live="assertive">
 				{announce}
 			</span>
@@ -395,6 +449,9 @@ function Workspace({ attemptId }: { attemptId: string }) {
 		[attemptId],
 	);
 
+	// load() dan send() saling memanggil; send hanya membaca ref, jadi aman lewat ref ini.
+	const sendRef = useRef<(qid: string) => void>(() => {});
+
 	const load = useCallback(async () => {
 		try {
 			const a = await api<Attempt>(`/student/attempts/${attemptId}`);
@@ -409,9 +466,27 @@ function Workspace({ attemptId }: { attemptId: string }) {
 					savedAt: s.saved_at,
 				};
 			}
+			// Jawaban yang masih antre di perangkat (mis. reload saat offline) dan lebih baru dari
+			// yang diterima server dikirim ulang; sisanya dibuang. Antrian attempt lain dihapus.
+			await queueClear(attemptId);
+			const pending: string[] = [];
+			for (const e of await queueAll()) {
+				if (e.rev > (fromServer[e.questionId]?.rev ?? 0)) {
+					fromServer[e.questionId] = {
+						answer: e.answer,
+						marked: e.marked,
+						rev: e.rev,
+						status: "queued",
+					};
+					pending.push(e.questionId);
+				} else {
+					await queueDelete(e.key);
+				}
+			}
 			latest.current = fromServer;
 			setLocal(fromServer);
 			setAttempt(a);
+			for (const qid of pending) sendRef.current(qid);
 		} catch (err) {
 			setError(message(err));
 		}
@@ -421,7 +496,30 @@ function Workspace({ attemptId }: { attemptId: string }) {
 		load();
 	}, [load]);
 
-	const left = useServerTimer(attemptId, attempt?.timer, finished);
+	const clock = useServerTimer(attemptId, attempt?.timer, finished);
+
+	// Waktu habis sebelum antrian terkirim: server menolak (ADR-006), siswa diberi instruksi.
+	const lockedOut = useCallback(async () => {
+		const late = Object.values(latest.current).filter(
+			(l) =>
+				l.status === "queued" || l.status === "failed" || l.status === "saving",
+		).length;
+		await queueClear();
+		try {
+			if (late) sessionStorage.setItem(LATE_FLAG, String(late));
+		} catch {}
+		finished();
+	}, [finished]);
+
+	useEffect(() => {
+		const resend = () => {
+			for (const [qid, l] of Object.entries(latest.current)) {
+				if (l.status === "queued" || l.status === "failed") send(qid);
+			}
+		};
+		window.addEventListener("online", resend);
+		return () => window.removeEventListener("online", resend);
+	});
 
 	const put = (qid: string, value: Local) => {
 		latest.current = { ...latest.current, [qid]: value };
@@ -455,7 +553,7 @@ function Workspace({ attemptId }: { attemptId: string }) {
 						);
 					} catch (err) {
 						if (err instanceof ApiError && err.code === "ATTEMPT_LOCKED")
-							return finished();
+							return lockedOut();
 						if (err instanceof ApiError && err.code === "REVISION_CONFLICT") {
 							await load();
 							return;
@@ -466,8 +564,8 @@ function Workspace({ attemptId }: { attemptId: string }) {
 							err.status >= 500;
 						put(qid, {
 							...latest.current[qid],
-							status: "failed",
-							error: message(err),
+							status: retryable ? "queued" : "failed",
+							error: retryable ? undefined : message(err),
 						});
 						if (!retryable) return;
 						await new Promise((r) => setTimeout(r, delay));
@@ -482,6 +580,7 @@ function Workspace({ attemptId }: { attemptId: string }) {
 						savedAt: receipt.saved_at,
 						error: undefined,
 					});
+					await queueDelete(`${attemptId}:${qid}`);
 					return;
 				}
 				// Ada perubahan baru selama menunggu: kirim lagi versi terbaru.
@@ -490,6 +589,8 @@ function Workspace({ attemptId }: { attemptId: string }) {
 			inflight.current.delete(qid);
 		}
 	}
+
+	sendRef.current = send;
 
 	function change(
 		qid: string,
@@ -501,8 +602,22 @@ function Workspace({ attemptId }: { attemptId: string }) {
 			rev: 0,
 			status: "saved",
 		};
-		put(qid, { ...cur, ...patch, rev: cur.rev + 1, status: "saving" });
-		send(qid);
+		const next: Local = {
+			...cur,
+			...patch,
+			rev: cur.rev + 1,
+			status: "saving",
+		};
+		put(qid, next);
+		// Ditulis ke perangkat SEBELUM dikirim: reload/tab crash di tengah jalan tidak menghilangkannya.
+		queuePut({
+			key: `${attemptId}:${qid}`,
+			attemptId,
+			questionId: qid,
+			answer: next.answer,
+			marked: next.marked,
+			rev: next.rev,
+		}).finally(() => send(qid));
 	}
 
 	if (!attempt) {
@@ -519,6 +634,7 @@ function Workspace({ attemptId }: { attemptId: string }) {
 	const states = Object.values(local);
 	const saving = states.some((s) => s.status === "saving");
 	const failed = states.find((s) => s.status === "failed");
+	const queued = states.filter((s) => s.status === "queued").length;
 	const lastSaved = states
 		.map((s) => s.savedAt)
 		.filter(Boolean)
@@ -572,26 +688,30 @@ function Workspace({ attemptId }: { attemptId: string }) {
 		</nav>
 	);
 
-	const saveText = saving
-		? "Menyimpan…"
-		: failed
-			? "Gagal menyimpan — mencoba lagi. Jangan tutup halaman."
-			: lastSaved
-				? `Tersimpan di server pukul ${fmtTime(lastSaved)}`
-				: "Belum ada jawaban";
+	const saveText = queued
+		? `${queued} jawaban tersimpan di perangkat, belum tersinkron`
+		: saving
+			? "Menyimpan…"
+			: failed
+				? "Gagal menyimpan — mencoba lagi. Jangan tutup halaman."
+				: lastSaved
+					? `Tersimpan di server pukul ${fmtTime(lastSaved)}`
+					: "Belum ada jawaban";
 
 	return (
 		<div className="exam">
 			<header className="exam-header">
 				<strong className="exam-title">{attempt.exam_title}</strong>
-				<TimerBadge seconds={left} />
+				<TimerBadge seconds={clock.left} frozen={clock.frozen} />
 				<span
-					className={`save save-${saving ? "saving" : failed ? "failed" : lastSaved ? "saved" : "empty"}`}
+					className={`save save-${queued ? "queued" : saving ? "saving" : failed ? "failed" : lastSaved ? "saved" : "empty"}`}
 					role="status"
 					aria-live="polite"
 				>
-					{(saving || failed || lastSaved) && (
-						<span aria-hidden="true">{saving ? "…" : failed ? "!" : "✓"} </span>
+					{(queued || saving || failed || lastSaved) && (
+						<span aria-hidden="true">
+							{queued ? "⇡" : saving ? "…" : failed ? "!" : "✓"}{" "}
+						</span>
 					)}
 					{saveText}
 				</span>
@@ -599,6 +719,17 @@ function Workspace({ attemptId }: { attemptId: string }) {
 			<div className="exam-body">
 				<main className="exam-main" tabIndex={-1}>
 					<Alert kind="error">{error}</Alert>
+					{clock.offline && (
+						<Alert kind="warning">
+							Koneksi ke server terputus. Jawaban baru tersimpan di perangkat
+							dan belum dikirim.{" "}
+							{clock.frozen
+								? "Waktu ujian dijeda sementara."
+								: clock.capReached
+									? "Batas jeda telah tercapai. Waktu ujian kembali berjalan. Hubungi pengawas."
+									: "Hubungi pengawas bila tidak segera tersambung."}
+						</Alert>
+					)}
 					{q && (
 						<StudentQuestionView
 							key={q.id}
@@ -684,8 +815,8 @@ function Workspace({ attemptId }: { attemptId: string }) {
 				total={qs.length}
 				answered={answered}
 				marked={marked}
-				blocked={saving || Boolean(failed)}
-				onSubmitted={finished}
+				blocked={saving || queued > 0 || Boolean(failed)}
+				onSubmitted={() => queueClear().finally(finished)}
 			/>
 		</div>
 	);
@@ -802,6 +933,15 @@ function Done({ attemptId }: { attemptId: string }) {
 		{ total_score: number; max_score: number } | string
 	>("");
 	const [review, setReview] = useState<ReviewItem[] | string | null>(null);
+	const [late] = useState(() => {
+		try {
+			const n = sessionStorage.getItem(LATE_FLAG);
+			sessionStorage.removeItem(LATE_FLAG);
+			return Number(n) || 0;
+		} catch {
+			return 0;
+		}
+	});
 	const [error, setError] = useState("");
 
 	useEffect(() => {
@@ -834,6 +974,12 @@ function Done({ attemptId }: { attemptId: string }) {
 	return (
 		<div className="stack-lg reading">
 			<Alert kind="error">{error}</Alert>
+			{late > 0 && (
+				<Alert kind="warning">
+					{late} jawaban belum terkirim ke server sebelum waktu habis sehingga
+					tidak dinilai. Segera hubungi pengawas.
+				</Alert>
+			)}
 			{attempt && (
 				<section className="card stack" aria-labelledby="h-done">
 					<h2 id="h-done" tabIndex={-1}>

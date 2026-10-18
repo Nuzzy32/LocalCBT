@@ -663,3 +663,12 @@ legend {
 .save-empty {
 	color: var(--text-secondary);
 }
+.timer-paused {
+	color: var(--brand-700);
+	border-color: currentColor;
+	background: var(--brand-50);
+}
+.save-queued {
+	color: var(--warning);
+	font-weight: 600;
+}

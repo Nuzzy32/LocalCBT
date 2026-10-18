@@ -724,7 +724,10 @@ paths:
   /student/attempts/{attemptId}/heartbeat:
     post:
       tags: [Student Attempts]
-      summary: Ping untuk deteksi koneksi; waktu client bukan authority
+      summary: |
+        Ping tiap 5 dtk. Setiap permintaan siswa ke attempt = bukti hidup: mengakhiri jeda
+        (kredit = lama jeda, ≤300/insiden, ≤600 total). Server menjeda otomatis bila 15 dtk tanpa
+        heartbeat; outage server dibekukan otomatis (DEC-03, outage_freeze) dan dicatat.
       operationId: heartbeatAttempt
       x-roles: [STUDENT]
       parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -822,7 +825,7 @@ paths:
   /proctor/attempts/{attemptId}/reset-session:
     post:
       tags: [Supervision]
-      summary: Reset sesi login tanpa menghapus attempt/jawaban
+      summary: Alias approve-device-switch (izin login ulang sekali pakai), tanpa menghapus attempt/jawaban
       operationId: resetAttemptSession
       x-roles: [TEACHER, PROCTOR]
       parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -838,7 +841,9 @@ paths:
   /proctor/attempts/{attemptId}/approve-device-switch:
     post:
       tags: [Supervision]
-      summary: Persetujuan perpindahan perangkat peserta
+      summary: |
+        Izin sekali pakai 5 menit agar siswa login di perangkat lain; login baru mencabut sesi lama.
+        Attempt, jawaban, dan jatah jeda tetap. M6: guru pemilik ujian; M7: pengawas yang ditugaskan.
       operationId: approveDeviceSwitch
       x-roles: [TEACHER, PROCTOR]
       parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -1493,6 +1498,8 @@ components:
         remaining_seconds: {type: integer, minimum: 0}
         pause_consumed_seconds: {type: integer, minimum: 0, maximum: 600}
         incident_pause_seconds: {type: integer, minimum: 0, maximum: 300}
+        pause_allowance_seconds: {type: integer, description: 'min(300, 600 − terpakai): jeda yang boleh ditiru klien saat offline'}
+        heartbeat_timeout_seconds: {type: integer, description: 'Putus terdeteksi setelah sekian detik tanpa heartbeat (ADR-004: 15)'}
     StudentAttempt:
       type: object
       required: [id, exam_id, state, timer, questions, answers]

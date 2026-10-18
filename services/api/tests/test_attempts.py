@@ -27,7 +27,7 @@ def idem() -> dict[str, str]:
 
 
 @pytest.fixture
-def exam(setup: dict[str, Any]) -> dict[str, Any]:  # noqa: F811
+def exam(setup: dict[str, Any]) -> dict[str, Any]:
     """Ujian terbit yang sedang dibuka + satu siswa di kelas yang ditugaskan."""
     body = exam_body(setup, start_window_from=(_now() - timedelta(minutes=1)).isoformat())
     exam_id = setup["client"].post("/api/v1/exams", json=body).json()["id"]

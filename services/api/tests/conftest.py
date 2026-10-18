@@ -15,6 +15,7 @@ _base = make_url(
     )
 )
 TEST_DB = f"{_base.database}_test"
+os.environ["LOCALCBT_SWEEPER_ENABLED"] = "false"
 os.environ["LOCALCBT_DATABASE_URL"] = _base.set(database=TEST_DB).render_as_string(
     hide_password=False
 )
@@ -53,7 +54,8 @@ def _clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     with engine.begin() as conn:
         conn.execute(
             text("""
-            truncate question_scores, student_answers, exam_attempts,
+            truncate audit_events, server_outages, pause_incidents,
+              question_scores, student_answers, exam_attempts,
               exam_question_snapshots, exam_assignments, exams,
               question_statements, question_options, questions, stimuli, media_assets,
               bank_shares, question_banks, import_jobs, teaching_assignments, subjects,
@@ -61,6 +63,7 @@ def _clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
               sessions, user_roles, users
             """)
         )
+        conn.execute(text("update server_clock set last_sweep_at = now()"))
 
 
 def make_user(username: str, *roles: str, name: str | None = None) -> str:

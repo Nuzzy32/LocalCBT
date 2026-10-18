@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     student_session_stale_seconds: int = 600
     # Gambar soal; nama berkas = sha256 isinya. Ikut dibackup bersama DB (M8).
     media_dir: Path = Path("data/media")
+    # Sweep periodik (jeda otomatis, auto-submit). Dimatikan di tes; tes memanggil sweep_once().
+    sweeper_enabled: bool = True
+    # DEC-03: lama server mati ditambahkan ke batas waktu attempt aktif (default disetujui).
+    outage_freeze: bool = True
 
 
 settings = Settings()

@@ -210,7 +210,18 @@ def login(body: LoginRequest, request: Request, response: Response, db: DB) -> d
     roles = set(
         db.scalars(text("select role from user_roles where user_id = :id"), {"id": user_id})
     )
-    if "STUDENT" in roles:
+    # Pindah perangkat disetujui pengawas: izin sekali pakai mengizinkan login ini meski sesi
+    # lama masih aktif; sesi lama dicabut di bawah sehingga perangkat lama tidak bisa merebut.
+    permitted = "STUDENT" in roles and db.scalar(
+        text("""
+        update exam_attempts set switch_permit_until = null
+        where student_id = :id and switch_permit_until > now()
+          and state in ('IN_PROGRESS', 'PAUSED')
+        returning id
+        """),
+        {"id": user_id},
+    )
+    if "STUDENT" in roles and not permitted:
         active = db.execute(
             text("""
             select 1 from sessions

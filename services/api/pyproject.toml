@@ -31,7 +31,7 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S"]
 ignore = ["S101"]
-per-file-ignores = { "tests/*" = ["S105", "S106"] }
+per-file-ignores = { "tests/*" = ["S105", "S106", "F811"] }  # F811: fixture diimpor lintas modul tes
 
 [tool.mypy]
 strict = true

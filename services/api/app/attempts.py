@@ -82,9 +82,14 @@ select a.id, a.exam_id, a.student_id, a.state, a.started_at, a.effective_deadlin
        a.question_order, a.submitted_at, a.graded_at, a.score_total, a.score_max,
        e.title as exam_title, e.scoring_rule_version, e.result_visibility, e.review_policy,
        e.results_published_at,
-       now() as server_now,
+       a.pause_consumed_sec, now() as server_now,
        a.effective_deadline_at > now() as answerable,
-       greatest(0, ceil(extract(epoch from a.effective_deadline_at - now())))::int as remaining,
+       -- Selama jeda, sisa waktu dibekukan pada saat jeda dimulai.
+       greatest(0, ceil(extract(epoch from a.effective_deadline_at
+         - case when a.state = 'PAUSED' then a.paused_at else now() end)))::int as remaining,
+       case when a.state = 'PAUSED'
+            then greatest(0, floor(extract(epoch from now() - a.paused_at)))::int
+            else 0 end as incident_sec,
        now() > e.start_window_until + make_interval(secs => e.duration_sec) as exam_closed
 from exam_attempts a join exams e on e.id = a.exam_id
 """
@@ -106,6 +111,54 @@ def get_attempt(db: Connection, user: CurrentUser, attempt_id: UUID) -> RowMappi
 
 def _lock(db: Connection, attempt_id: UUID) -> None:
     db.execute(text("select 1 from exam_attempts where id = :id for update"), {"id": attempt_id})
+
+
+HEARTBEAT_TIMEOUT = 15  # ADR-004 (usulan): heartbeat 5 dtk, putus setelah 15 dtk tanpa heartbeat
+PAUSE_CAP = 300  # per insiden
+PAUSE_TOTAL = 600  # akumulasi per attempt, tidak di-reset oleh reconnect/ganti perangkat
+
+
+def close_pause(db: Connection, attempt_id: UUID, reason: Literal["RECONNECT", "CAP"]) -> None:
+    """Tutup jeda yang sedang berjalan (baris attempt sudah dikunci pemanggil): geser deadline
+    sebesar kredit = min(lama jeda, 300, sisa jatah 600)."""
+    db.execute(
+        text("""
+        with c as (
+          select id, paused_at,
+                 least(greatest(0, floor(extract(epoch from now() - paused_at)))::int,
+                       :cap, :total - pause_consumed_sec) as credit
+          from exam_attempts where id = :id and state = 'PAUSED'
+        ), u as (
+          update exam_attempts a set state = 'IN_PROGRESS', paused_at = null,
+            effective_deadline_at = a.effective_deadline_at + make_interval(secs => c.credit),
+            pause_consumed_sec = a.pause_consumed_sec + c.credit
+          from c where a.id = c.id returning a.id
+        )
+        insert into pause_incidents (attempt_id, detected_at, resumed_at, credited_sec, end_reason)
+        select c.id, c.paused_at, now(), c.credit, :reason from c join u using (id)
+        """),
+        {"id": attempt_id, "reason": reason, "cap": PAUSE_CAP, "total": PAUSE_TOTAL},
+    )
+
+
+def live(
+    db: Connection, user: CurrentUser, attempt_id: UUID, tab_visible: bool | None = None
+) -> RowMapping:
+    """Setiap permintaan siswa ke attempt-nya = bukti hidup: catat heartbeat, akhiri jeda,
+    lalu auto-submit bila batas waktu lewat. Mengembalikan status terbaru."""
+    get_attempt(db, user, attempt_id)
+    _lock(db, attempt_id)
+    db.execute(
+        text("""
+        update exam_attempts set last_heartbeat_at = now(),
+          last_tab_visible = coalesce(:tv, last_tab_visible)
+        where id = :id
+        """),
+        {"id": attempt_id, "tv": tab_visible},
+    )
+    close_pause(db, attempt_id, "RECONNECT")
+    expire_due(db, attempt_id=attempt_id)
+    return get_attempt(db, user, attempt_id)
 
 
 def _grade(db: Connection, attempt_id: UUID, exam_id: UUID, rule: str) -> None:
@@ -173,7 +226,7 @@ def finalize(db: Connection, attempt_id: UUID, reason: Literal["STUDENT", "DEADL
 def expire_due(
     db: Connection, *, student_id: UUID | None = None, attempt_id: UUID | None = None
 ) -> None:
-    """Auto-submit attempt yang melewati batas waktu server (lazy; sweep periodik di M6)."""
+    """Auto-submit attempt yang melewati batas waktu server (lazy + sweep periodik)."""
     for (due,) in db.execute(
         text("""
         select id from exam_attempts
@@ -195,9 +248,12 @@ def _timer(att: RowMapping) -> dict[str, Any]:
         "server_now": att["server_now"],
         "state": att["state"],
         "deadline_at": att["effective_deadline_at"],
-        "remaining_seconds": att["remaining"] if att["state"] == "IN_PROGRESS" else 0,
-        "pause_consumed_seconds": 0,  # M6
-        "incident_pause_seconds": 0,  # M6
+        "remaining_seconds": att["remaining"] if att["state"] in ("IN_PROGRESS", "PAUSED") else 0,
+        "pause_consumed_seconds": att["pause_consumed_sec"],
+        "incident_pause_seconds": att["incident_sec"],
+        # Untuk tampilan klien saat offline: jatah jeda insiden berikutnya.
+        "pause_allowance_seconds": min(PAUSE_CAP, PAUSE_TOTAL - att["pause_consumed_sec"]),
+        "heartbeat_timeout_seconds": HEARTBEAT_TIMEOUT,
     }
 
 
@@ -368,9 +424,7 @@ def start_attempt(
 
 @router.get("/student/attempts/{attempt_id}")
 def get_student_attempt(attempt_id: UUID, user: Student, db: DB) -> dict[str, Any]:
-    get_attempt(db, user, attempt_id)
-    expire_due(db, attempt_id=attempt_id)
-    return attempt_out(db, get_attempt(db, user, attempt_id))
+    return attempt_out(db, live(db, user, attempt_id))
 
 
 class SaveAnswerIn(BaseModel):
@@ -388,10 +442,8 @@ def save_answer(
     user: Student,
     db: DB,
 ) -> dict[str, Any]:
-    get_attempt(db, user, attempt_id)
     # ponytail: mengunci attempt menserialkan simpanan satu siswa; cukup untuk 1 perangkat/siswa.
-    _lock(db, attempt_id)
-    att = get_attempt(db, user, attempt_id)
+    att = live(db, user, attempt_id)
     snapshot = load_snapshot(db, att["exam_id"], question_id)
     if not snapshot:
         raise not_found()
@@ -451,14 +503,12 @@ def save_answer(
 
 
 class HeartbeatIn(BaseModel):
-    tab_visible: bool | None = None  # indikator saja (dicatat mulai M6), bukan bukti curang
+    tab_visible: bool | None = None  # indikator saja, bukan bukti curang
 
 
 @router.post("/student/attempts/{attempt_id}/heartbeat")
 def heartbeat(attempt_id: UUID, body: HeartbeatIn, user: Student, db: DB) -> dict[str, Any]:
-    get_attempt(db, user, attempt_id)
-    expire_due(db, attempt_id=attempt_id)
-    return _timer(get_attempt(db, user, attempt_id))
+    return _timer(live(db, user, attempt_id, body.tab_visible))
 
 
 class SubmitIn(BaseModel):
@@ -474,7 +524,7 @@ def submit_attempt(
     db: DB,
     _key: IdempotencyKey,
 ) -> dict[str, Any]:
-    att = get_attempt(db, user, attempt_id)
+    att = live(db, user, attempt_id)
     reason: Literal["STUDENT", "DEADLINE"] = "STUDENT" if att["answerable"] else "DEADLINE"
     if finalize(db, attempt_id, reason):
         response.status_code = 201
@@ -502,9 +552,7 @@ def _result_visible(att: RowMapping) -> bool:
 
 @router.get("/student/attempts/{attempt_id}/result")
 def get_result(attempt_id: UUID, user: Student, db: DB) -> dict[str, Any]:
-    get_attempt(db, user, attempt_id)
-    expire_due(db, attempt_id=attempt_id)
-    att = get_attempt(db, user, attempt_id)
+    att = live(db, user, attempt_id)
     if not _result_visible(att):
         raise ApiError(
             403, "RESULT_HIDDEN", "Nilai belum tersedia. Guru akan menentukan waktu publikasi."
@@ -520,9 +568,7 @@ def get_result(attempt_id: UUID, user: Student, db: DB) -> dict[str, Any]:
 
 @router.get("/student/attempts/{attempt_id}/review")
 def get_review(attempt_id: UUID, user: Student, db: DB) -> dict[str, Any]:
-    get_attempt(db, user, attempt_id)
-    expire_due(db, attempt_id=attempt_id)
-    att = get_attempt(db, user, attempt_id)
+    att = live(db, user, attempt_id)
     policy = att["review_policy"] or {}
     available_from = policy.get("available_from")
     is_open = (
