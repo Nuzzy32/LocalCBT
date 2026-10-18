@@ -11,7 +11,7 @@ from sqlalchemy import Connection, RowMapping, text
 
 from app import scoring
 from app.auth import CurrentUser, hash_password, require_roles
-from app.db import DB
+from app.db import DB, audit
 from app.errors import ApiError, not_found
 from app.media import media_url
 from app.questions import load_questions, to_student_question
@@ -74,6 +74,18 @@ select e.id, e.title, e.subject_id, sub.name as subject_name, e.author_teacher_i
             else (select count(*) from exam_question_snapshots x where x.exam_id = e.id)
        end as question_count
 from exams e join subjects sub on sub.id = e.subject_id
+"""
+
+
+# Peserta ujian: siswa di kelas yang ditugaskan + siswa yang sudah punya attempt (walau sudah
+# dipindah kelas). UNION: siswa di dua kelas yang sama-sama ditugaskan tetap muncul sekali.
+ROSTER = """
+with roster as (
+  select m.student_id from exam_assignments ea
+  join class_memberships m on m.class_id = ea.class_id where ea.exam_id = :e
+  union
+  select student_id from exam_attempts where exam_id = :e
+)
 """
 
 
@@ -309,6 +321,9 @@ def update_result_policy(
             "vis": body.visibility,
             "review": _review_json(body),
         },
+    )
+    audit(
+        db, user.id, "RESULT_POLICY_CHANGED", "exam", exam_id, metadata=body.model_dump(mode="json")
     )
     return exam_out(get_exam(db, user, exam_id))["result_policy"]  # type: ignore[no-any-return]
 

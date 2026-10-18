@@ -1,5 +1,7 @@
+import json
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy import Connection, create_engine, text
@@ -30,3 +32,29 @@ def database_ok() -> bool:
         return True
     except Exception:
         return False
+
+
+def audit(
+    db: Connection,
+    actor_id: UUID | None,
+    action: str,
+    target_type: str,
+    target_id: UUID,
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Jejak tindakan penting (append-only). Jangan masukkan jawaban, token, atau kata sandi."""
+    db.execute(
+        text("""
+        insert into audit_events (actor_id, action, target_type, target_id, reason, metadata)
+        values (:a, :act, :tt, :tid, :r, cast(:m as jsonb))
+        """),
+        {
+            "a": actor_id,
+            "act": action,
+            "tt": target_type,
+            "tid": target_id,
+            "r": reason,
+            "m": json.dumps(metadata or {}),
+        },
+    )

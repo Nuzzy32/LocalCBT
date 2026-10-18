@@ -34,6 +34,7 @@ type Timer = {
 	server_now: string;
 	pause_allowance_seconds: number;
 	heartbeat_timeout_seconds: number;
+	announcements_count: number;
 };
 type SavedAnswer = {
 	question_id: string;
@@ -311,6 +312,7 @@ function isAnswered(a: Answer | null | undefined) {
 }
 
 type Clock = {
+	announcements: number;
 	left: number;
 	offline: boolean;
 	frozen: boolean;
@@ -327,7 +329,9 @@ function useServerTimer(
 	const base = useRef({ remaining: 0, at: 0, allowance: 0, timeout: 15 });
 	const failures = useRef(0);
 	const ending = useRef(false);
+	const announcements = useRef(0);
 	const [clock, setClock] = useState<Clock>({
+		announcements: 0,
 		left: 0,
 		offline: false,
 		frozen: false,
@@ -342,6 +346,7 @@ function useServerTimer(
 			? Math.min(Math.max(0, elapsed - b.timeout), b.allowance)
 			: 0;
 		return {
+			announcements: announcements.current,
 			left: Math.max(0, Math.ceil(b.remaining - (elapsed - frozenFor))),
 			offline,
 			frozen: offline && elapsed > b.timeout && frozenFor < b.allowance,
@@ -352,6 +357,7 @@ function useServerTimer(
 	const sync = useCallback(
 		(t: Timer) => {
 			failures.current = 0;
+			announcements.current = t.announcements_count;
 			base.current = {
 				remaining: t.remaining_seconds,
 				at: performance.now(),
@@ -393,9 +399,12 @@ function useServerTimer(
 			}
 		}, 1000);
 		const beat = setInterval(heartbeat, HEARTBEAT_MS);
+		// Pindah tab dikirim saat itu juga (indikator untuk pengawas, bukan vonis).
+		document.addEventListener("visibilitychange", heartbeat);
 		return () => {
 			clearInterval(tick);
 			clearInterval(beat);
+			document.removeEventListener("visibilitychange", heartbeat);
 		};
 	}, [heartbeat, compute]);
 
@@ -497,6 +506,19 @@ function Workspace({ attemptId }: { attemptId: string }) {
 	}, [load]);
 
 	const clock = useServerTimer(attemptId, attempt?.timer, finished);
+	const [notices, setNotices] = useState<
+		{ message: string; issued_at: string }[]
+	>([]);
+	// Pengumuman diambil saat dibuka dan setiap jumlahnya bertambah (juga setelah reconnect).
+	useEffect(() => {
+		if (clock.announcements >= 0) {
+			api<{ message: string; issued_at: string }[]>(
+				`/student/attempts/${attemptId}/announcements`,
+			)
+				.then(setNotices)
+				.catch(() => {});
+		}
+	}, [attemptId, clock.announcements]);
 
 	// Waktu habis sebelum antrian terkirim: server menolak (ADR-006), siswa diberi instruksi.
 	const lockedOut = useCallback(async () => {
@@ -719,6 +741,20 @@ function Workspace({ attemptId }: { attemptId: string }) {
 			<div className="exam-body">
 				<main className="exam-main" tabIndex={-1}>
 					<Alert kind="error">{error}</Alert>
+					{notices.length > 0 && (
+						<section
+							className="notices"
+							aria-label="Pengumuman pengawas"
+							aria-live="polite"
+						>
+							{notices.map((n) => (
+								<p key={n.issued_at} className="alert alert-info">
+									<strong>Pengumuman {fmtTime(n.issued_at)}:</strong>{" "}
+									{n.message}
+								</p>
+							))}
+						</section>
+					)}
 					{clock.offline && (
 						<Alert kind="warning">
 							Koneksi ke server terputus. Jawaban baru tersimpan di perangkat

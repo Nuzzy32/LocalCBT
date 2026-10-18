@@ -54,7 +54,8 @@ def _clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     with engine.begin() as conn:
         conn.execute(
             text("""
-            truncate audit_events, server_outages, pause_incidents,
+            truncate announcements, proctor_assignments,
+              audit_events, server_outages, pause_incidents,
               question_scores, student_answers, exam_attempts,
               exam_question_snapshots, exam_assignments, exams,
               question_statements, question_options, questions, stimuli, media_assets,

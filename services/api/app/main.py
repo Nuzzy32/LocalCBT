@@ -24,6 +24,7 @@ from app import (
     proctor,
     question_import,
     questions,
+    results,
     sweeper,
 )
 from app.config import settings
@@ -83,6 +84,7 @@ app.include_router(media.router)
 app.include_router(exams.router)
 app.include_router(attempts.router)
 app.include_router(proctor.router)
+app.include_router(results.router)
 
 
 def error_response(

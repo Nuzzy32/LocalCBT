@@ -15,7 +15,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 
 from app.config import settings
 from app.db import DB
@@ -114,10 +114,10 @@ class CurrentUser:
         }
 
 
-def current_user(request: Request, db: DB) -> CurrentUser:
-    token = request.cookies.get(COOKIE)
+def session_user(db: Connection, token: str | None) -> CurrentUser | None:
+    """Pengguna dari cookie sesi (tanpa cek CSRF). Dipakai HTTP dan WebSocket."""
     if not token:
-        raise ApiError(401, "UNAUTHENTICATED", "Silakan masuk terlebih dahulu.")
+        return None
     row = (
         db.execute(
             text("""
@@ -137,11 +137,7 @@ def current_user(request: Request, db: DB) -> CurrentUser:
         .first()
     )
     if row is None:
-        raise ApiError(401, "SESSION_EXPIRED", "Sesi berakhir. Silakan masuk kembali.")
-    if request.method not in SAFE_METHODS:
-        sent = request.headers.get("x-csrf-token", "").encode()
-        if not hmac.compare_digest(sent, row["csrf_token"].encode()):
-            raise ApiError(403, "CSRF_INVALID", "Permintaan ditolak. Muat ulang halaman.")
+        return None
     if row["touch"]:  # tulis paling sering 1x/menit, bukan tiap request
         db.execute(
             text("update sessions set last_seen_at = now() where token_hash = :h"),
@@ -155,6 +151,20 @@ def current_user(request: Request, db: DB) -> CurrentUser:
         csrf_token=row["csrf_token"],
         session_hash=row["token_hash"],
     )
+
+
+def current_user(request: Request, db: DB) -> CurrentUser:
+    token = request.cookies.get(COOKIE)
+    if not token:
+        raise ApiError(401, "UNAUTHENTICATED", "Silakan masuk terlebih dahulu.")
+    user = session_user(db, token)
+    if user is None:
+        raise ApiError(401, "SESSION_EXPIRED", "Sesi berakhir. Silakan masuk kembali.")
+    if request.method not in SAFE_METHODS:
+        sent = request.headers.get("x-csrf-token", "").encode()
+        if not hmac.compare_digest(sent, user.csrf_token.encode()):
+            raise ApiError(403, "CSRF_INVALID", "Permintaan ditolak. Muat ulang halaman.")
+    return user
 
 
 User = Annotated[CurrentUser, Depends(current_user)]

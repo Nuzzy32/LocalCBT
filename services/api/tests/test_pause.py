@@ -197,8 +197,11 @@ def test_t007_device_switch_requires_supervisor_permit(exam: dict[str, Any]) -> 
     assert old.get("/api/v1/auth/me").status_code == 401
     assert new_client().post("/api/v1/auth/login", json=creds).status_code == 409  # sekali pakai
     assert _sql("select switch_permit_until from exam_attempts").scalar() is None
-    audit = _sql("select action, reason from audit_events").one()
-    assert audit == ("DEVICE_SWITCH_APPROVED", "Laptop siswa mati total")
+    audit = _sql("select action, reason from audit_events order by created_at").all()
+    assert [tuple(r) for r in audit] == [
+        ("PROCTOR_ACTION_DENIED", None),  # guru lain yang bukan pengawas (T-021)
+        ("DEVICE_SWITCH_APPROVED", "Laptop siswa mati total"),
+    ]
 
 
 def test_device_switch_rejected_for_finished_attempt(exam: dict[str, Any]) -> None:

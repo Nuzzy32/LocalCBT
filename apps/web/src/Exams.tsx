@@ -6,6 +6,7 @@ import {
 	StudentQuestionView,
 	TYPE_LABEL,
 } from "./QuestionEditor";
+import { ExamResults } from "./Results";
 import { ActionForm, Alert, Field, message, navigate } from "./ui";
 
 type Visibility = "TEACHER_ONLY" | "IMMEDIATE" | "AFTER_PUBLICATION";
@@ -76,6 +77,7 @@ export function ExamsPage({ path }: { path: string }) {
 	const [, , , id, sub] = path.split("/");
 	if (id === "new") return <ExamBuilder exam={null} />;
 	if (id && sub === "preview") return <ExamPreview examId={id} />;
+	if (id && sub === "results") return <ExamResults examId={id} />;
 	if (id) return <ExamDetail key={id} examId={id} />;
 	return <ExamList />;
 }
@@ -556,6 +558,20 @@ function ExamDetail({ examId }: { examId: string }) {
 				<div className="form-row">
 					<button
 						type="button"
+						className="btn btn-primary"
+						onClick={() => navigate(`/proctor/exams/${exam.id}`)}
+					>
+						Pantau
+					</button>
+					<button
+						type="button"
+						className="btn btn-secondary"
+						onClick={() => navigate(`/teacher/exams/${exam.id}/results`)}
+					>
+						Hasil & nilai
+					</button>
+					<button
+						type="button"
 						className="btn btn-secondary"
 						onClick={() => navigate(`/teacher/exams/${exam.id}/preview`)}
 					>
@@ -613,6 +629,7 @@ function ExamDetail({ examId }: { examId: string }) {
 				</ActionForm>
 			</section>
 
+			<ProctorAssignments examId={exam.id} />
 			<PolicyEditor exam={exam} />
 		</div>
 	);
@@ -773,6 +790,96 @@ function ExamPreview({ examId }: { examId: string }) {
 						total={data.questions.length}
 					/>
 				))}
+			</div>
+		</section>
+	);
+}
+
+type Person = { id: string; display_name: string };
+
+function ProctorAssignments({ examId }: { examId: string }) {
+	const [data, setData] = useState<{
+		assigned: Person[];
+		candidates: Person[];
+	}>();
+	const [pick, setPick] = useState("");
+	const [error, setError] = useState("");
+	const load = () =>
+		api<{ assigned: Person[]; candidates: Person[] }>(
+			`/exams/${examId}/proctors`,
+		)
+			.then(setData)
+			.catch((err) => setError(message(err)));
+	// biome-ignore lint/correctness/useExhaustiveDependencies: muat sekali per ujian
+	useEffect(() => {
+		load();
+	}, [examId]);
+
+	async function change(method: "POST" | "DELETE", userId: string) {
+		setError("");
+		try {
+			await api(
+				method === "POST"
+					? `/exams/${examId}/proctors`
+					: `/exams/${examId}/proctors/${userId}`,
+				{ method, json: method === "POST" ? { user_id: userId } : undefined },
+			);
+			setPick("");
+			load();
+		} catch (err) {
+			setError(message(err));
+		}
+	}
+
+	const assignedIds = new Set(data?.assigned.map((p) => p.id));
+	return (
+		<section className="card stack" aria-labelledby="h-proctors">
+			<h2 id="h-proctors">Pengawas</h2>
+			<p className="muted">
+				Anda selalu bisa mengawasi ujian sendiri. Pengawas yang ditugaskan hanya
+				melihat ujian ini, tanpa kunci jawaban maupun nilai.
+			</p>
+			<Alert kind="error">{error}</Alert>
+			{data?.assigned.length ? (
+				<ul className="list">
+					{data.assigned.map((p) => (
+						<li key={p.id}>
+							<span>{p.display_name}</span>
+							<button
+								type="button"
+								className="btn btn-ghost danger"
+								onClick={() => change("DELETE", p.id)}
+							>
+								Lepas
+							</button>
+						</li>
+					))}
+				</ul>
+			) : (
+				<p className="muted">Belum ada pengawas tambahan.</p>
+			)}
+			<div className="form-row">
+				<label className="field">
+					<span>Tugaskan pengawas</span>
+					<select value={pick} onChange={(e) => setPick(e.target.value)}>
+						<option value="">Pilih…</option>
+						{data?.candidates
+							.filter((c) => !assignedIds.has(c.id))
+							.map((c) => (
+								<option key={c.id} value={c.id}>
+									{c.display_name}
+								</option>
+							))}
+					</select>
+				</label>
+				<button
+					type="button"
+					className="btn btn-secondary"
+					disabled={!pick}
+					onClick={() => change("POST", pick)}
+				>
+					Tugaskan
+				</button>
 			</div>
 		</section>
 	);

@@ -29,12 +29,11 @@ x-realtime-contract:
   protocol: WebSocket
   endpoint: /api/v1/ws/exams/{examId}
   auth: Same-origin HTTPS/WSS session cookie, Origin check, per-exam authorization
-  events:
-    - attempt_status_changed
-    - connection_changed
-    - announcement_created
-    - time_extension_added
-  note: WebSocket frames and reconnection protocol are defined in TDD. No answer keys in events.
+  frames: |
+    Satu jenis frame: {"type": "snapshot", ...MonitorResponse} tiap 3 dtk (snapshot penuh, jadi
+    reconnect tidak kehilangan apa pun). Sesi & hak pengawasan diperiksa ulang tiap frame; dicabut
+    → close 1008. Origin/cookie/hak tidak valid → ditolak sebelum accept. Tanpa jawaban, kunci,
+    maupun nilai.
 paths:
   /auth/login:
     post:
@@ -811,7 +810,10 @@ paths:
   /proctor/exams/{examId}/monitor:
     get:
       tags: [Supervision]
-      summary: Snapshot monitoring yang perlu diikuti WebSocket event
+      summary: |
+        Snapshot pengawasan (sama dengan frame WebSocket). Roster = siswa kelas yang ditugaskan
+        ∪ siswa yang sudah punya attempt. Status: NOT_STARTED/ACTIVE/DISCONNECTED/PAUSED/SUBMITTED.
+        Akses: guru pemilik ujian atau pengawas yang ditugaskan (lainnya 404 + audit).
       operationId: getExamMonitor
       x-roles: [TEACHER, PROCTOR]
       parameters: [{$ref: '#/components/parameters/ExamId'}]
@@ -859,7 +861,9 @@ paths:
   /proctor/attempts/{attemptId}/time-extensions:
     post:
       tags: [Supervision]
-      summary: Tambah waktu siswa dengan alasan dan audit
+      summary: |
+        Tambah waktu (alasan wajib, audit TIME_EXTENDED). Attempt yang batas waktunya sudah lewat
+        dikumpulkan dulu sehingga tidak bisa dihidupkan kembali (409).
       operationId: extendStudentTime
       x-roles: [TEACHER, PROCTOR]
       parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -890,7 +894,9 @@ paths:
   /teacher/exams/{examId}/results:
     get:
       tags: [Results]
-      summary: Daftar nilai untuk guru pemilik dan authorized admin
+      summary: |
+        Daftar nilai untuk guru pemilik (v1). Mengembalikan objek {title, visibility,
+        results_published_at, rows: TeacherResultRow[]} untuk semua peserta roster.
       operationId: listTeacherExamResults
       x-roles: [TEACHER, ADMIN]
       parameters: [{$ref: '#/components/parameters/ExamId'}]
@@ -919,6 +925,90 @@ paths:
         '200': {description: Policy changed with audit}
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /teacher/exams/{examId}/results/publish:
+    post:
+      tags: [Results]
+      summary: Publikasikan nilai (AFTER_PUBLICATION); tidak membuka pembahasan; diaudit
+      operationId: publishExamResults
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '200': {description: results_published_at}
+  /teacher/exams/{examId}/results/unpublish:
+    post:
+      tags: [Results]
+      summary: Tarik publikasi nilai; diaudit
+      operationId: unpublishExamResults
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '200': {description: results_published_at null}
+  /teacher/exams/{examId}/regrade:
+    post:
+      tags: [Results]
+      summary: Nilai ulang attempt SUBMITTED yang gagal dinilai; GRADED tidak disentuh
+      operationId: regradeExam
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '200': {description: '{pending, graded}'}
+  /exams/{examId}/proctors:
+    parameters: [{$ref: '#/components/parameters/ExamId'}]
+    get:
+      tags: [Supervision]
+      summary: Pengawas yang ditugaskan + kandidat (PROCTOR/TEACHER aktif); hanya pemilik ujian
+      operationId: listExamProctors
+      x-roles: [TEACHER]
+      responses:
+        '200': {description: '{assigned, candidates}'}
+    post:
+      tags: [Supervision]
+      summary: Tugaskan pengawas (diaudit)
+      operationId: assignExamProctor
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {$ref: '#/components/schemas/Id'}
+      responses:
+        '201': {description: Ditugaskan}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /exams/{examId}/proctors/{userId}:
+    delete:
+      tags: [Supervision]
+      summary: Lepas pengawas (diaudit); aliran WebSocket-nya terputus pada frame berikutnya
+      operationId: unassignExamProctor
+      x-roles: [TEACHER]
+      parameters:
+        - {$ref: '#/components/parameters/ExamId'}
+        - {name: userId, in: path, required: true, schema: {$ref: '#/components/schemas/Id'}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '204': {description: Dilepas}
+  /proctor/exams:
+    get:
+      tags: [Supervision]
+      summary: Ujian yang saya awasi (pemilik atau ditugaskan)
+      operationId: listSupervisedExams
+      x-roles: [TEACHER, PROCTOR]
+      responses:
+        '200': {description: Daftar ujian}
+  /proctor/attempts/{attemptId}/events:
+    get:
+      tags: [Supervision]
+      summary: Riwayat insiden peserta (jeda, pindah tab sebagai indikator, tambah waktu, izin)
+      operationId: listAttemptEvents
+      x-roles: [TEACHER, PROCTOR]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}]
+      responses:
+        '200': {description: Kejadian terbaru dulu}
+        '404': {$ref: '#/components/responses/NotFound'}
   /teacher/exams/{examId}/results/export:
     get:
       tags: [Results]
@@ -1611,24 +1701,33 @@ components:
       properties:
         exam_id: {$ref: '#/components/schemas/Id'}
         server_now: {type: string, format: date-time}
+        total_count: {type: integer, description: Jumlah soal}
         counts:
           type: object
           properties:
+            not_started: {type: integer}
             active: {type: integer}
             paused: {type: integer}
             disconnected: {type: integer}
             submitted: {type: integer}
+        announcements:
+          type: array
+          items: {type: object, properties: {message: {type: string}, issued_at: {type: string, format: date-time}}}
         participants:
           type: array
           items:
             type: object
             properties:
               student_id: {$ref: '#/components/schemas/Id'}
+              nis: {type: string}
               display_name: {type: string}
-              state: {type: string}
+              attempt_id: {type: [string, 'null']}
+              status: {type: string, enum: [NOT_STARTED, ACTIVE, DISCONNECTED, PAUSED, SUBMITTED]}
               answered_count: {type: integer}
-              total_count: {type: integer}
-              pause_consumed_seconds: {type: integer}
+              pause_consumed_sec: {type: integer}
+              remaining_seconds: {type: [integer, 'null']}
+              tab_hidden: {type: integer, description: Indikator untuk ditinjau manusia, bukan bukti curang}
+              permit_pending: {type: boolean}
     ProctorActionReason:
       type: object
       required: [reason]

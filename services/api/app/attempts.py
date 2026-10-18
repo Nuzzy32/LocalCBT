@@ -19,7 +19,7 @@ from sqlalchemy import Connection, RowMapping, text
 
 from app import scoring
 from app.auth import CurrentUser, LoginRateLimiter, require_roles, verify_password
-from app.db import DB
+from app.db import DB, audit
 from app.errors import ApiError, not_found
 from app.exams import apply_permutation, load_snapshot
 from app.questions import to_student_question
@@ -90,7 +90,13 @@ select a.id, a.exam_id, a.student_id, a.state, a.started_at, a.effective_deadlin
        case when a.state = 'PAUSED'
             then greatest(0, floor(extract(epoch from now() - a.paused_at)))::int
             else 0 end as incident_sec,
-       now() > e.start_window_until + make_interval(secs => e.duration_sec) as exam_closed
+       (select count(*) from announcements n where n.exam_id = a.exam_id) as announcements_count,
+       -- Ujian "usai" baru bila jendela mulai lewat DAN tidak ada peserta yang masih mengerjakan
+       -- (jeda, outage, dan tambahan waktu bisa melewati start_window_until + durasi).
+       now() > e.start_window_until + make_interval(secs => e.duration_sec)
+         and not exists (select 1 from exam_attempts x
+                         where x.exam_id = e.id and x.state in ('IN_PROGRESS', 'PAUSED'))
+         as exam_closed
 from exam_attempts a join exams e on e.id = a.exam_id
 """
 
@@ -148,6 +154,12 @@ def live(
     lalu auto-submit bila batas waktu lewat. Mengembalikan status terbaru."""
     get_attempt(db, user, attempt_id)
     _lock(db, attempt_id)
+    # Pindah tab hanya indikator untuk ditinjau manusia (T-022), dicatat pada transisi saja.
+    if tab_visible is False and db.scalar(
+        text("select last_tab_visible is distinct from false from exam_attempts where id = :id"),
+        {"id": attempt_id},
+    ):
+        audit(db, user.id, "TAB_HIDDEN", "exam_attempt", attempt_id)
     db.execute(
         text("""
         update exam_attempts set last_heartbeat_at = now(),
@@ -223,6 +235,28 @@ def finalize(db: Connection, attempt_id: UUID, reason: Literal["STUDENT", "DEADL
     return True
 
 
+def regrade(db: Connection, attempt_id: UUID) -> bool:
+    """Nilai ulang attempt yang SUBMITTED tapi gagal dinilai. GRADED tidak pernah disentuh."""
+    _lock(db, attempt_id)
+    row = db.execute(
+        text("""
+        select a.exam_id, e.scoring_rule_version as rule
+        from exam_attempts a join exams e on e.id = a.exam_id
+        where a.id = :id and a.state = 'SUBMITTED'
+        """),
+        {"id": attempt_id},
+    ).first()
+    if row is None:
+        return False
+    try:
+        with db.begin_nested():
+            _grade(db, attempt_id, row.exam_id, row.rule)
+        return True
+    except Exception:
+        log.exception("regrade failed", extra={"extra_fields": {"attempt_id": str(attempt_id)}})
+        return False
+
+
 def expire_due(
     db: Connection, *, student_id: UUID | None = None, attempt_id: UUID | None = None
 ) -> None:
@@ -254,6 +288,7 @@ def _timer(att: RowMapping) -> dict[str, Any]:
         # Untuk tampilan klien saat offline: jatah jeda insiden berikutnya.
         "pause_allowance_seconds": min(PAUSE_CAP, PAUSE_TOTAL - att["pause_consumed_sec"]),
         "heartbeat_timeout_seconds": HEARTBEAT_TIMEOUT,
+        "announcements_count": att["announcements_count"],
     }
 
 
@@ -614,3 +649,14 @@ def get_review(attempt_id: UUID, user: Student, db: DB) -> dict[str, Any]:
             item["correct_answer"] = q["answer_key"]
         items.append(item)
     return {"attempt_id": str(attempt_id), "questions": items}
+
+
+@router.get("/student/attempts/{attempt_id}/announcements")
+def list_announcements(attempt_id: UUID, user: Student, db: DB) -> list[dict[str, Any]]:
+    """Pengumuman pengawas untuk ujian ini; diambil ulang setelah reconnect (teks saja)."""
+    att = get_attempt(db, user, attempt_id)
+    rows = db.execute(
+        text("select message, issued_at from announcements where exam_id = :e order by issued_at"),
+        {"e": att["exam_id"]},
+    )
+    return [{"message": r.message, "issued_at": r.issued_at} for r in rows]

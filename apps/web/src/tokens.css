@@ -672,3 +672,84 @@ legend {
 	color: var(--warning);
 	font-weight: 600;
 }
+
+/* ---- Pengawasan & hasil ---- */
+.alert-info {
+	color: var(--brand-700);
+	background: var(--brand-50);
+}
+.notices {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+.counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.count {
+	font: inherit;
+	min-height: 44px;
+	padding: 0 var(--space-3);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	cursor: pointer;
+}
+.count[aria-pressed="true"] {
+	border-color: var(--brand-600);
+	background: var(--brand-50);
+}
+.status-active,
+.count-active {
+	color: var(--success);
+}
+.status-disconnected,
+.count-disconnected {
+	color: var(--danger);
+	font-weight: 600;
+}
+.status-paused,
+.count-paused {
+	color: var(--warning);
+}
+.chip-review {
+	color: var(--warning);
+	margin-left: var(--space-2);
+}
+.drawer {
+	max-width: 640px;
+	width: calc(100% - 32px);
+}
+.link-btn {
+	display: inline-flex;
+	align-items: center;
+	text-decoration: none;
+}
+.num {
+	font-variant-numeric: tabular-nums;
+}
+@media (max-width: 767px) {
+	.monitor thead {
+		display: none;
+	}
+	.monitor tr {
+		display: block;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-control);
+		margin-bottom: var(--space-2);
+		padding: var(--space-2);
+	}
+	.monitor td {
+		display: flex;
+		justify-content: space-between;
+		gap: var(--space-2);
+		border: 0;
+		padding: var(--space-1) 0;
+	}
+	.monitor td::before {
+		content: attr(data-label);
+		color: var(--text-secondary);
+	}
+}

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Admin } from "./Admin";
 import { ApiError, api, type Me, ROLE_HOME, setCsrf } from "./api";
 import { Login } from "./Login";
+import { ProctorPage } from "./Proctor";
 import { StudentPage } from "./Student";
 import { TeacherPage } from "./Teacher";
 import "./tokens.css";
@@ -15,6 +16,8 @@ function homeFor(me: Me): string {
 const section = (path: string) => `/${path.split("/")[1] ?? ""}`;
 
 function allowed(me: Me, path: string): boolean {
+	// Guru boleh membuka area pengawasan untuk ujiannya sendiri / yang ditugaskan (server memeriksa).
+	if (section(path) === "/proctor" && me.roles.includes("TEACHER")) return true;
 	return ROLE_HOME.some(
 		([role, home]) => home === section(path) && me.roles.includes(role),
 	);
@@ -114,6 +117,8 @@ function App() {
 					<Admin />
 				) : section(path) === "/teacher" ? (
 					<TeacherPage path={path} />
+				) : section(path) === "/proctor" ? (
+					<ProctorPage path={path} />
 				) : section(path) === "/student" ? (
 					<StudentPage path={path} />
 				) : (
