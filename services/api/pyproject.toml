@@ -1,0 +1,44 @@
+[project]
+name = "localcbt-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "argon2-cffi>=25.1.0",
+    "openpyxl>=3.1.5",
+    "defusedxml>=0.7.1",
+    "python-multipart>=0.0.32",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-openpyxl>=3.1.5.20261017",
+    "types-defusedxml>=0.7.0.20260504",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+per-file-ignores = { "tests/*" = ["S105", "S106"] }
+
+[tool.mypy]
+strict = true
+packages = ["app"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

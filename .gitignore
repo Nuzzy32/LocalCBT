@@ -1,0 +1,24 @@
+# Secrets & data (TDD §4: tidak boleh di-commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+backups/
+data/
+
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Web
+node_modules/
+dist/
+
+.DS_Store
+*.tsbuildinfo
+.dev-credentials

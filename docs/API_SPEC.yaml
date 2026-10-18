@@ -1,0 +1,1572 @@
+openapi: 3.1.0
+info:
+  title: LocalCBT REST API
+  version: 1.0.0-draft
+  description: |
+    Kontrak API awal untuk LocalCBT v1.0. Status DRAFT, endpoint dan contoh payload usulan teknis,
+    belum diimplementasikan. Disusun dari PRD Business Rules BR-01 s.d. BR-25.
+    Semua permintaan peserta harus melalui LAN ujian; tidak ada cloud wajib.
+    Semua mutation endpoint yang telah authenticated mensyaratkan session cookie, X-CSRF-Token,
+    serta validasi Origin/Referer. Server menjadi otoritas timer, grade, publish, submit.
+    `student` endpoints tidak pernah mengungkap answer key atau nilai yang belum diizinkan guru.
+  contact:
+    name: LocalCBT engineering
+servers:
+  - url: https://cbt.sekolah.test/api/v1
+    description: Contoh DNS lokal, harus dikonfigurasi dan trust sertifikatnya pada perangkat sekolah
+security:
+  - SessionCookie: []
+tags:
+  - name: Authentication
+  - name: Academic Admin
+  - name: Question Bank
+  - name: Exams
+  - name: Student Attempts
+  - name: Supervision
+  - name: Results
+  - name: Operations
+x-realtime-contract:
+  protocol: WebSocket
+  endpoint: /api/v1/ws/exams/{examId}
+  auth: Same-origin HTTPS/WSS session cookie, Origin check, per-exam authorization
+  events:
+    - attempt_status_changed
+    - connection_changed
+    - announcement_created
+    - time_extension_added
+  note: WebSocket frames and reconnection protocol are defined in TDD. No answer keys in events.
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login NIS atau username staf dengan password
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200':
+          description: Session cookie HttpOnly ditetapkan. CSRF token tersedia pada response body.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LoginResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Origin tidak diizinkan (ORIGIN_REJECTED)}
+        '409': {description: 'SESSION_ACTIVE: siswa masih punya sesi aktif di perangkat lain. Staf: login terbaru mencabut sesi lama.'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: Identitas dan role aktif
+      operationId: getMe
+      responses:
+        '200':
+          description: Identitas user tanpa password hash, plus csrf_token agar SPA pulih setelah reload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/CurrentUser'}
+                  - type: object
+                    required: [csrf_token]
+                    properties:
+                      csrf_token: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Cabut sesi aktif pengguna
+      operationId: logout
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '204': {description: Logout berhasil}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /admin/students/import/preview:
+    post:
+      tags: [Academic Admin]
+      summary: Preview import siswa XLSX tanpa commit
+      operationId: previewStudentImport
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: {type: string, format: binary}
+              required: [file]
+      responses:
+        '200':
+          description: Ringkasan preview dan validasi baris
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ImportPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /admin/students/import/commit:
+    post:
+      tags: [Academic Admin]
+      summary: Simpan data siswa hasil import terverifikasi
+      operationId: commitStudentImport
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preview_id, confirm]
+              properties:
+                preview_id: {$ref: '#/components/schemas/Id'}
+                confirm: {type: boolean, const: true}
+      responses:
+        '200':
+          description: |
+            Sinkron, satu transaksi (gagal = tidak ada siswa tersimpan). Kredensial awal hanya
+            dikembalikan sekali (Cache-Control no-store), tidak disimpan maupun di-log.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, credentials]
+                properties:
+                  job_id: {$ref: '#/components/schemas/Id'}
+                  status: {type: string, const: COMPLETED}
+                  credentials:
+                    type: array
+                    items:
+                      type: object
+                      required: [nis, name, class, password]
+                      properties:
+                        nis: {type: string}
+                        name: {type: string}
+                        class: {type: string}
+                        password: {type: string}
+        '409': {description: IMPORT_HAS_ERRORS / IMPORT_ALREADY_COMMITTED / IMPORT_CONFLICT}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /admin/classes:
+    post:
+      tags: [Academic Admin]
+      summary: Buat kelas
+      operationId: createClass
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, label, academic_year]
+              properties:
+                code: {type: string, minLength: 1, maxLength: 32}
+                label: {type: string, minLength: 1, maxLength: 160}
+                academic_year: {type: string, pattern: '^\d{4}/\d{4}$'}
+      responses:
+        '201':
+          description: Kelas dibuat
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassSummary'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    get:
+      tags: [Academic Admin]
+      summary: Daftar kelas; admin melihat semua, guru hanya kelas yang ia ajar
+      operationId: listClasses
+      x-roles: [ADMIN, TEACHER]
+      responses:
+        '200':
+          description: Daftar kelas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ClassSummary'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /admin/subjects:
+    get:
+      tags: [Academic Admin]
+      summary: Daftar mata pelajaran
+      operationId: listSubjects
+      x-roles: [ADMIN, TEACHER]
+      responses:
+        '200':
+          description: Daftar mapel
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Subject'}
+    post:
+      tags: [Academic Admin]
+      summary: Buat mata pelajaran
+      operationId: createSubject
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: {type: string, minLength: 1, maxLength: 32}
+                name: {type: string, minLength: 1, maxLength: 160}
+      responses:
+        '201':
+          description: Mapel dibuat
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Subject'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /admin/teaching-assignments:
+    post:
+      tags: [Academic Admin]
+      summary: Tugaskan guru ke kelas + mapel (menentukan kelas yang terlihat oleh guru)
+      operationId: createTeachingAssignment
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [teacher_id, class_id, subject_id]
+              properties:
+                teacher_id: {$ref: '#/components/schemas/Id'}
+                class_id: {$ref: '#/components/schemas/Id'}
+                subject_id: {$ref: '#/components/schemas/Id'}
+      responses:
+        '201': {description: Penugasan dibuat}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {description: 'INVALID_REFERENCE: bukan guru, atau kelas/mapel tidak ada'}
+  /question-banks:
+    get:
+      tags: [Question Bank]
+      summary: Bank milik guru dan yang dibagikan kepadanya
+      operationId: listQuestionBanks
+      x-roles: [TEACHER]
+      responses:
+        '200':
+          description: Bank soal terlihat sesuai ownership/sharing
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/QuestionBank'}
+    post:
+      tags: [Question Bank]
+      summary: Buat bank soal pribadi
+      operationId: createQuestionBank
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateQuestionBank'}
+      responses:
+        '201':
+          description: Bank dibuat
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionBank'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /question-banks/{bankId}/questions:
+    parameters: [{$ref: '#/components/parameters/BankId'}]
+    get:
+      tags: [Question Bank]
+      summary: Daftar soal suatu bank (hanya staff authorized)
+      operationId: listQuestions
+      x-roles: [TEACHER]
+      responses:
+        '200':
+          description: Soal termasuk answer key untuk pemilik/penerima share dengan izin sesuai kebijakan
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/TeacherQuestion'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Question Bank]
+      summary: Tambah soal teks/gambar dengan kunci per jenis
+      operationId: createQuestion
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateQuestion'}
+      responses:
+        '201':
+          description: Question dibuat
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TeacherQuestion'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /question-banks/{bankId}/shares:
+    parameters: [{$ref: '#/components/parameters/BankId'}]
+    get:
+      tags: [Question Bank]
+      summary: Daftar penerima share (OWNER)
+      operationId: listQuestionBankShares
+      x-roles: [TEACHER]
+      responses:
+        '200': {description: '[{teacher_id, display_name, permission}]'}
+    post:
+      tags: [Question Bank]
+      summary: Bagikan bank soal dengan guru lain
+      operationId: shareQuestionBank
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ShareBankRequest'}
+      responses:
+        '200': {description: Sharing tersimpan dan diaudit}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /question-banks/{bankId}/imports/preview:
+    post:
+      tags: [Question Bank]
+      summary: |
+        Preview parsing soal XLSX (1 baris = 1 soal) / DOCX (1 tabel label|isi = 1 soal).
+        Kolom: Jenis (PG/MCMA/KATEGORI), Stimulus, Pertanyaan, Bobot, Kunci, Opsi A–E.
+        Makro, DTD/entity, zip bomb ditolak; gambar di DOCX = error baris (tambahkan via editor).
+      operationId: previewQuestionImport
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/BankId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        '200':
+          description: Hasil parse dan error validasi
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ImportPreview'}
+        '413': {$ref: '#/components/responses/TooLarge'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /exams:
+    get:
+      tags: [Exams]
+      summary: Daftar ujian yang dimiliki/diizinkan untuk guru
+      operationId: listTeacherExams
+      x-roles: [TEACHER]
+      responses:
+        '200':
+          description: List of staff-safe exam summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ExamSummary'}
+    post:
+      tags: [Exams]
+      summary: Buat ujian DRAFT
+      operationId: createExam
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateExam'}
+      responses:
+        '201':
+          description: Ujian dibuat sebagai DRAFT
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExamSummary'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /exams/{examId}/publish:
+    post:
+      tags: [Exams]
+      summary: Validasi dan bekukan snapshot ujian
+      operationId: publishExam
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: {type: boolean, const: true}
+              required: [confirm]
+      responses:
+        '200':
+          description: Published snapshot frozen
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExamSummary'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /question-banks/{bankId}:
+    get:
+      tags: [Question Bank]
+      summary: Detail bank beserta level akses pengguna (OWNER/EDIT/COPY/VIEW)
+      operationId: getQuestionBank
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/BankId'}]
+      responses:
+        '200': {description: Bank, content: {application/json: {schema: {$ref: '#/components/schemas/QuestionBank'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /question-banks/{bankId}/stimuli:
+    parameters: [{$ref: '#/components/parameters/BankId'}]
+    get:
+      tags: [Question Bank]
+      summary: Stimulus bersama di bank (VIEW)
+      operationId: listStimuli
+      x-roles: [TEACHER]
+      responses:
+        '200': {description: Daftar stimulus}
+    post:
+      tags: [Question Bank]
+      summary: Buat stimulus teks dan/atau gambar (EDIT)
+      operationId: createStimulus
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body_text: {type: string, minLength: 1, maxLength: 10000}
+                media_asset_id: {$ref: '#/components/schemas/Id'}
+      responses:
+        '201': {description: Stimulus dibuat}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /question-banks/{bankId}/preview:
+    get:
+      tags: [Question Bank]
+      summary: Pratinjau seperti siswa (VIEW); whitelist StudentQuestion, tanpa kunci
+      operationId: previewQuestionBank
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/BankId'}]
+      responses:
+        '200':
+          description: Soal tersanitasi
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/StudentQuestion'}}
+  /question-banks/{bankId}/copy:
+    post:
+      tags: [Question Bank]
+      summary: Salin soal (sumber COPY, tujuan EDIT); stimulus bersama disalin sekali
+      operationId: copyQuestions
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/BankId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_bank_id]
+              properties:
+                target_bank_id: {$ref: '#/components/schemas/Id'}
+                question_ids: {type: array, items: {$ref: '#/components/schemas/Id'}}
+      responses:
+        '200': {description: '{copied: integer}'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /question-banks/{bankId}/shares/{teacherId}:
+    delete:
+      tags: [Question Bank]
+      summary: Cabut akses guru (OWNER)
+      operationId: revokeQuestionBankShare
+      x-roles: [TEACHER]
+      parameters:
+        - {$ref: '#/components/parameters/BankId'}
+        - {name: teacherId, in: path, required: true, schema: {$ref: '#/components/schemas/Id'}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '204': {description: Akses dicabut}
+  /teachers:
+    get:
+      tags: [Question Bank]
+      summary: Guru aktif lain (id, display_name) untuk dialog berbagi
+      operationId: listTeachers
+      x-roles: [TEACHER]
+      responses:
+        '200': {description: Daftar guru}
+  /media:
+    post:
+      tags: [Question Bank]
+      summary: Unggah gambar PNG/JPEG/WebP (magic bytes, maks. 2 MB, 4096 px, 16 MP); SVG ditolak
+      operationId: uploadMedia
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+                alt_text: {type: string, maxLength: 300}
+      responses:
+        '201': {description: '{id, mime, width, height, size_bytes, url}'}
+        '413': {$ref: '#/components/responses/TooLarge'}
+        '415': {description: Bukan PNG/JPEG/WebP}
+  /media/{mediaId}:
+    get:
+      tags: [Question Bank]
+      summary: Ambil gambar (pengunggah atau guru yang bisa melihat bank pemakai; siswa di M5)
+      operationId: getMedia
+      x-roles: [TEACHER]
+      parameters: [{name: mediaId, in: path, required: true, schema: {$ref: '#/components/schemas/Id'}}]
+      responses:
+        '200': {description: 'Gambar; header nosniff + CSP sandbox, no-store'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /question-import-templates/{fmt}:
+    get:
+      tags: [Question Bank]
+      summary: Unduh template import soal (dibuat dari konstanta header yang sama dengan parser)
+      operationId: downloadQuestionTemplate
+      x-roles: [TEACHER]
+      parameters: [{name: fmt, in: path, required: true, schema: {type: string, enum: [xlsx, docx]}}]
+      responses:
+        '200': {description: Berkas template}
+  /student/exams:
+    get:
+      tags: [Student Attempts]
+      summary: Ujian assigned siswa, tanpa kunci atau kebocoran soal
+      operationId: listAssignedStudentExams
+      x-roles: [STUDENT]
+      responses:
+        '200':
+          description: Daftar ujian yang ditugaskan ke siswa
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/StudentExamSummary'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /student/exams/{examId}/token/verify:
+    post:
+      tags: [Student Attempts]
+      summary: Verifikasi token ujian tanpa mengungkap kunci
+      operationId: verifyExamToken
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, minLength: 4, maxLength: 32}
+      responses:
+        '200':
+          description: Token valid, grant sementara untuk memulai ujian
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  start_grant: {type: string, description: Opaque server-issued short-lived start grant}
+                  expires_at: {type: string, format: date-time}
+                required: [start_grant, expires_at]
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+  /student/exams/{examId}/attempts:
+    post:
+      tags: [Student Attempts]
+      summary: Buat atau ambil kembali satu attempt siswa
+      operationId: startOrResumeAttempt
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                start_grant: {type: string}
+                confirm_start: {type: boolean, const: true}
+              required: [start_grant, confirm_start]
+      responses:
+        '200':
+          description: Existing attempt restored
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StudentAttempt'}
+        '201':
+          description: New attempt created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StudentAttempt'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /student/attempts/{attemptId}:
+    get:
+      tags: [Student Attempts]
+      summary: Status authoritative attempt dan soal tersanitasi tanpa key
+      operationId: getStudentAttempt
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}]
+      responses:
+        '200':
+          description: Attempt milik siswa dan soal sans answer key
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StudentAttempt'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /student/attempts/{attemptId}/answers/{questionId}:
+    put:
+      tags: [Student Attempts]
+      summary: Upsert jawaban, mark for review, dan server ACK
+      operationId: saveStudentAnswer
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/QuestionId'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SaveAnswerRequest'}
+      responses:
+        '200':
+          description: Committed to server database
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SaveAnswerReceipt'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /student/attempts/{attemptId}/heartbeat:
+    post:
+      tags: [Student Attempts]
+      summary: Ping untuk deteksi koneksi; waktu client bukan authority
+      operationId: heartbeatAttempt
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tab_visible: {type: boolean, description: Indikator saja, bukan bukti kecurangan}
+      responses:
+        '200':
+          description: Status timer dan koneksi dari server
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TimerStatus'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /student/attempts/{attemptId}/submit:
+    post:
+      tags: [Student Attempts]
+      summary: Submit atomik dan idempotent
+      operationId: submitStudentAttempt
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: {type: boolean, const: true}
+              required: [confirm]
+      responses:
+        '200':
+          description: Already submitted; same receipt returned
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SubmissionReceipt'}
+        '201':
+          description: Submitted once and persisted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SubmissionReceipt'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /student/attempts/{attemptId}/result:
+    get:
+      tags: [Results]
+      summary: Nilai siswa hanya bila teacher policy mengizinkan
+      operationId: getStudentResult
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}]
+      responses:
+        '200':
+          description: Nilai visible sesuai policy; tidak mengandung answer key
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StudentVisibleResult'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /student/attempts/{attemptId}/review:
+    get:
+      tags: [Results]
+      summary: Review pascaujian sesuai izin guru, tidak otomatis ada setelah submit
+      operationId: getStudentReview
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}]
+      responses:
+        '200':
+          description: Review dengan kolom yang diizinkan policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReviewResponse'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /proctor/exams/{examId}/monitor:
+    get:
+      tags: [Supervision]
+      summary: Snapshot monitoring yang perlu diikuti WebSocket event
+      operationId: getExamMonitor
+      x-roles: [TEACHER, PROCTOR]
+      parameters: [{$ref: '#/components/parameters/ExamId'}]
+      responses:
+        '200':
+          description: Monitoring hanya untuk ujian yang ditugaskan
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonitorResponse'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /proctor/attempts/{attemptId}/reset-session:
+    post:
+      tags: [Supervision]
+      summary: Reset sesi login tanpa menghapus attempt/jawaban
+      operationId: resetAttemptSession
+      x-roles: [TEACHER, PROCTOR]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProctorActionReason'}
+      responses:
+        '200': {description: Session revoked; audit recorded}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /proctor/attempts/{attemptId}/approve-device-switch:
+    post:
+      tags: [Supervision]
+      summary: Persetujuan perpindahan perangkat peserta
+      operationId: approveDeviceSwitch
+      x-roles: [TEACHER, PROCTOR]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProctorActionReason'}
+      responses:
+        '200': {description: Old device session revoked, one-time switch permit granted}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /proctor/attempts/{attemptId}/time-extensions:
+    post:
+      tags: [Supervision]
+      summary: Tambah waktu siswa dengan alasan dan audit
+      operationId: extendStudentTime
+      x-roles: [TEACHER, PROCTOR]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TimeExtensionRequest'}
+      responses:
+        '201': {description: Extension created and audited}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /proctor/exams/{examId}/announcements:
+    post:
+      tags: [Supervision]
+      summary: Kirim pengumuman ke peserta ujian
+      operationId: createAnnouncement
+      x-roles: [TEACHER, PROCTOR]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAnnouncement'}
+      responses:
+        '201': {description: Broadcast persisted and queued for subscribers}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /teacher/exams/{examId}/results:
+    get:
+      tags: [Results]
+      summary: Daftar nilai untuk guru pemilik dan authorized admin
+      operationId: listTeacherExamResults
+      x-roles: [TEACHER, ADMIN]
+      parameters: [{$ref: '#/components/parameters/ExamId'}]
+      responses:
+        '200':
+          description: Score list with grade state
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/TeacherResultRow'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /teacher/exams/{examId}/result-policy:
+    put:
+      tags: [Results]
+      summary: Atur visibility nilai dan review secara terpisah
+      operationId: updateResultPolicy
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResultPolicy'}
+      responses:
+        '200': {description: Policy changed with audit}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /teacher/exams/{examId}/results/export:
+    get:
+      tags: [Results]
+      summary: Export nilai Excel XLSX
+      operationId: exportExamResults
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}]
+      responses:
+        '200':
+          description: File XLSX dengan akses hasil yang berwenang
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: {type: string, format: binary}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /ops/health:
+    get:
+      tags: [Operations]
+      summary: Health summary operator saja, bukan endpoint publik siswa
+      operationId: opsHealth
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Service availability, DB, storage, backup status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/HealthResponse'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /ops/preflight:
+    post:
+      tags: [Operations]
+      summary: Jalankan preflight server; probe VLAN siswa harus terpisah
+      operationId: startPreflight
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '202':
+          description: Preflight job created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JobReceipt'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /ops/backups:
+    post:
+      tags: [Operations]
+      summary: Trigger manual backup yang konsisten dan diverifikasi
+      operationId: createManualBackup
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '202':
+          description: Backup job queued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JobReceipt'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /ops/backups/{backupId}/restore:
+    post:
+      tags: [Operations]
+      summary: Minta restore backup, harus menjalankan prosedur maintenance dan konfirmasi
+      operationId: restoreBackup
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/BackupId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm, reason]
+              properties:
+                confirm: {type: boolean, const: true}
+                reason: {type: string, minLength: 10, maxLength: 500}
+      responses:
+        '202':
+          description: Restore queued only when safe maintenance mode confirmed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JobReceipt'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /admin/staff:
+    post:
+      tags: [Academic Admin]
+      summary: Buat akun guru atau pengawas sesuai kebutuhan sekolah
+      operationId: createStaffAccount
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, display_name, roles]
+              properties:
+                username: {type: string, minLength: 3, maxLength: 64}
+                display_name: {type: string, minLength: 1, maxLength: 160}
+                roles:
+                  type: array
+                  items: {type: string, enum: [TEACHER, PROCTOR]}
+      responses:
+        '201':
+          description: Akun staf dibuat; temporary_password hanya dikembalikan sekali (no-store)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, username, display_name, roles, temporary_password]
+                properties:
+                  id: {$ref: '#/components/schemas/Id'}
+                  username: {type: string}
+                  display_name: {type: string}
+                  roles: {type: array, items: {type: string}}
+                  temporary_password: {type: string}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    get:
+      tags: [Academic Admin]
+      summary: Daftar akun staf (admin/guru/pengawas)
+      operationId: listStaff
+      x-roles: [ADMIN]
+      responses:
+        '200': {description: Daftar staf tanpa password hash}
+  /admin/students/{studentId}/password-reset:
+    post:
+      tags: [Academic Admin]
+      summary: Reset kata sandi siswa secara terotorisasi
+      operationId: resetStudentPassword
+      x-roles: [ADMIN]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {$ref: '#/components/schemas/Id'}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProctorActionReason'}
+      responses:
+        '200':
+          description: Kata sandi baru dikembalikan sekali (no-store); semua sesi siswa dicabut
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [temporary_password]
+                properties:
+                  temporary_password: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /question-banks/{bankId}/imports/commit:
+    post:
+      tags: [Question Bank]
+      summary: Commit hasil import soal yang sudah dipreview (sinkron, satu transaksi)
+      operationId: commitQuestionImport
+      x-roles: [TEACHER]
+      x-access: EDIT
+      parameters: [{$ref: '#/components/parameters/BankId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preview_id, confirm]
+              properties:
+                preview_id: {$ref: '#/components/schemas/Id'}
+                confirm: {type: boolean, const: true}
+      responses:
+        '200':
+          description: Semua soal tersimpan; stimulus dengan teks sama dikelompokkan
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, imported]
+                properties:
+                  job_id: {$ref: '#/components/schemas/Id'}
+                  status: {type: string, const: COMPLETED}
+                  imported: {type: integer}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /question-banks/{bankId}/questions/{questionId}:
+    put:
+      tags: [Question Bank]
+      summary: Edit soal sumber sebelum publish exam, tidak mengubah snapshot historis
+      operationId: updateSourceQuestion
+      x-roles: [TEACHER]
+      parameters:
+        - {$ref: '#/components/parameters/BankId'}
+        - {$ref: '#/components/parameters/QuestionId'}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateQuestion'}
+      responses:
+        '200':
+          description: Version sumber increment, snapshot ujian tetap
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TeacherQuestion'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    delete:
+      tags: [Question Bank]
+      summary: Nonaktifkan soal (soft delete, EDIT)
+      operationId: deactivateQuestion
+      x-roles: [TEACHER]
+      parameters:
+        - {$ref: '#/components/parameters/BankId'}
+        - {$ref: '#/components/parameters/QuestionId'}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '204': {description: Soal tidak lagi tampil di daftar/pratinjau/salin}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /student/attempts/{attemptId}/announcements:
+    get:
+      tags: [Student Attempts]
+      summary: Ambil pengumuman ujian yang terlewat setelah reconnect
+      operationId: listAttemptAnnouncements
+      x-roles: [STUDENT]
+      parameters: [{$ref: '#/components/parameters/AttemptId'}]
+      responses:
+        '200':
+          description: Announcements text-only, sorted by issued_at
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    message: {type: string}
+                    issued_at: {type: string, format: date-time}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /teacher/exams/{examId}/preview:
+    get:
+      tags: [Exams]
+      summary: Preview guru sebelum publish tanpa mengubah ujian
+      operationId: previewTeacherExam
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}]
+      responses:
+        '200':
+          description: Sanitized student-like preview plus staff-only validation errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  questions:
+                    type: array
+                    items: {$ref: '#/components/schemas/StudentQuestion'}
+                  validation_errors:
+                    type: array
+                    items: {type: string}
+        '403': {$ref: '#/components/responses/Forbidden'}
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: localcbt_session
+      description: Server-side session ID cookie, Secure HttpOnly SameSite
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: CSRF token bound to authenticated session, not needed on read-only GET
+      schema: {type: string, minLength: 12}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated UUID per logical write, replay returns same result
+      schema: {type: string, format: uuid}
+    ExamId:
+      name: examId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    AttemptId:
+      name: attemptId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    QuestionId:
+      name: questionId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    BankId:
+      name: bankId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    BackupId:
+      name: backupId
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+  responses:
+    Unauthorized:
+      description: Belum login / session invalid
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Forbidden:
+      description: Tidak memiliki role atau object permission
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    NotFound:
+      description: Resource tidak ditemukan atau tidak terlihat bagi pengguna
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Conflict:
+      description: State/revision conflict atau attempt terkunci
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    ValidationError:
+      description: Field validation failed
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    TooLarge:
+      description: Upload terlalu besar
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    RateLimited:
+      description: Terlalu banyak permintaan
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+  schemas:
+    Id:
+      type: string
+      format: uuid
+    ApiError:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, example: ATTEMPT_LOCKED}
+            message: {type: string, example: Ujian telah selesai. Jawaban baru tidak dapat disimpan.}
+            details: {type: object, additionalProperties: true}
+        request_id: {type: string}
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string, minLength: 1, maxLength: 64, description: NIS siswa atau username staf}
+        password: {type: string, format: password, minLength: 1}
+    LoginResponse:
+      type: object
+      required: [user, csrf_token]
+      properties:
+        user: {$ref: '#/components/schemas/CurrentUser'}
+        csrf_token: {type: string}
+    CurrentUser:
+      type: object
+      required: [id, display_name, roles]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        display_name: {type: string}
+        roles:
+          type: array
+          items: {type: string, enum: [ADMIN, TEACHER, PROCTOR, STUDENT]}
+    ImportPreview:
+      type: object
+      required: [preview_id, total_rows, valid_rows, errors]
+      properties:
+        preview_id: {$ref: '#/components/schemas/Id'}
+        total_rows: {type: integer, minimum: 0}
+        valid_rows: {type: integer, minimum: 0}
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row_number: {type: integer}
+              field: {type: string}
+              message: {type: string}
+    JobReceipt:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id: {$ref: '#/components/schemas/Id'}
+        status: {type: string, enum: [QUEUED, RUNNING, COMPLETED, FAILED]}
+    ClassSummary:
+      type: object
+      required: [id, code, name, academic_year]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        code: {type: string}
+        name: {type: string, description: Sama dengan label kelas}
+        academic_year: {type: string}
+        active: {type: boolean}
+    Subject:
+      type: object
+      required: [id, code, name]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        code: {type: string}
+        name: {type: string}
+    CreateQuestionBank:
+      type: object
+      required: [title, subject_id]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 160}
+        subject_id: {$ref: '#/components/schemas/Id'}
+    QuestionBank:
+      allOf:
+        - {$ref: '#/components/schemas/CreateQuestionBank'}
+        - type: object
+          required: [id, owner_teacher_id]
+          properties:
+            id: {$ref: '#/components/schemas/Id'}
+            owner_teacher_id: {$ref: '#/components/schemas/Id'}
+            access: {type: string, enum: [OWNER, EDIT, COPY, VIEW]}
+    CreateQuestion:
+      type: object
+      required: [type, stem, weight]
+      properties:
+        type: {type: string, enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, CATEGORY_CHOICE]}
+        stem: {type: string, minLength: 1, maxLength: 10000}
+        weight: {type: number, exclusiveMinimum: 0, multipleOf: 0.01}
+        media_asset_id: {$ref: '#/components/schemas/Id'}
+        stimulus_id: {$ref: '#/components/schemas/Id'}
+        options:
+          type: array
+          items: {$ref: '#/components/schemas/TeacherOption'}
+        statements:
+          type: array
+          items: {$ref: '#/components/schemas/TeacherStatement'}
+      description: Validate conditional fields by question type; no audio/video input. Teacher keys only, never student.
+    TeacherOption:
+      type: object
+      required: [text, is_correct]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        text: {type: string}
+        is_correct: {type: boolean}
+    TeacherStatement:
+      type: object
+      required: [text, correct_value]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        text: {type: string}
+        correct_value: {type: boolean}
+    TeacherQuestion:
+      allOf:
+        - {$ref: '#/components/schemas/CreateQuestion'}
+        - type: object
+          required: [id, version]
+          properties:
+            id: {$ref: '#/components/schemas/Id'}
+            version: {type: integer, minimum: 1}
+    ShareBankRequest:
+      type: object
+      required: [teacher_id, permission]
+      properties:
+        teacher_id: {$ref: '#/components/schemas/Id'}
+        permission: {type: string, enum: [VIEW, COPY, EDIT]}
+    CreateExam:
+      type: object
+      required: [title, subject_id, class_ids, question_ids, start_window_from, start_window_until, duration_seconds, token, result_policy]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 160}
+        subject_id: {$ref: '#/components/schemas/Id'}
+        class_ids:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/Id'}
+        question_ids:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/Id'}
+        start_window_from: {type: string, format: date-time}
+        start_window_until: {type: string, format: date-time}
+        duration_seconds: {type: integer, minimum: 60}
+        token: {type: string, minLength: 4, maxLength: 32, writeOnly: true}
+        shuffle_questions: {type: boolean, const: true, default: true}
+        shuffle_options: {type: boolean, const: true, default: true}
+        result_policy: {$ref: '#/components/schemas/ResultPolicy'}
+      description: Server validates start_window_until after start_window_from and immutable on publish. Scoring rule version must be confirmed before publish.
+    ResultPolicy:
+      type: object
+      required: [visibility, review_enabled]
+      properties:
+        visibility: {type: string, enum: [TEACHER_ONLY, IMMEDIATE, AFTER_PUBLICATION], default: TEACHER_ONLY}
+        review_enabled: {type: boolean}
+        review_available_from: {type: [string, 'null'], format: date-time}
+        show_correct_answers: {type: boolean, default: false}
+        show_explanations: {type: boolean, default: false}
+    ExamSummary:
+      type: object
+      required: [id, title, status, duration_seconds, start_window_from, start_window_until]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        title: {type: string}
+        status: {type: string, enum: [DRAFT, PUBLISHED, ACTIVE, CLOSED, ARCHIVED]}
+        duration_seconds: {type: integer}
+        start_window_from: {type: string, format: date-time}
+        start_window_until: {type: string, format: date-time}
+    StudentExamSummary:
+      type: object
+      required: [id, title, status, duration_seconds]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        title: {type: string}
+        status: {type: string, enum: [SCHEDULED, AVAILABLE, IN_PROGRESS, COMPLETED]}
+        duration_seconds: {type: integer}
+    StudentQuestion:
+      type: object
+      description: Sanitized published snapshot, no is_correct/correct_value or answer key fields
+      required: [id, type, stem, weight]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        type: {type: string, enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, CATEGORY_CHOICE]}
+        stem: {type: string}
+        weight: {type: number}
+        stimulus_id: {type: [string, 'null'], description: Soal dengan stimulus sama dikelompokkan}
+        stimulus: {type: [string, 'null'], description: Text stimulus if any}
+        stimulus_image_url: {type: [string, 'null']}
+        image_url: {type: [string, 'null'], description: Auth-protected relative URL to local image}
+        options:
+          type: array
+          items:
+            type: object
+            required: [id, text]
+            properties:
+              id: {$ref: '#/components/schemas/Id'}
+              text: {type: string}
+        statements:
+          type: array
+          items:
+            type: object
+            required: [id, text]
+            properties:
+              id: {$ref: '#/components/schemas/Id'}
+              text: {type: string}
+    TimerStatus:
+      type: object
+      required: [server_now, state, remaining_seconds, pause_consumed_seconds, incident_pause_seconds]
+      properties:
+        server_now: {type: string, format: date-time}
+        state: {type: string, enum: [IN_PROGRESS, PAUSED, SUBMITTED, GRADED]}
+        remaining_seconds: {type: integer, minimum: 0}
+        pause_consumed_seconds: {type: integer, minimum: 0, maximum: 600}
+        incident_pause_seconds: {type: integer, minimum: 0, maximum: 300}
+    StudentAttempt:
+      type: object
+      required: [id, exam_id, state, timer, questions, answers]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        exam_id: {$ref: '#/components/schemas/Id'}
+        state: {type: string, enum: [IN_PROGRESS, PAUSED, SUBMITTED, GRADED]}
+        timer: {$ref: '#/components/schemas/TimerStatus'}
+        questions:
+          type: array
+          items: {$ref: '#/components/schemas/StudentQuestion'}
+        answers:
+          type: array
+          items: {$ref: '#/components/schemas/StudentSavedAnswer'}
+    StudentSavedAnswer:
+      type: object
+      required: [question_id, answer, server_revision, saved_at, marked_for_review]
+      properties:
+        question_id: {$ref: '#/components/schemas/Id'}
+        answer:
+          oneOf:
+            - {$ref: '#/components/schemas/AnswerPayload'}
+            - {type: 'null'}
+        server_revision: {type: integer, minimum: 0}
+        saved_at: {type: string, format: date-time}
+        marked_for_review: {type: boolean}
+    AnswerPayload:
+      description: Validated by server against actual question type and correct snapshot IDs.
+      oneOf:
+        - type: object
+          required: [type, selected_option_id]
+          properties:
+            type: {type: string, const: SINGLE_CHOICE}
+            selected_option_id: {$ref: '#/components/schemas/Id'}
+        - type: object
+          required: [type, selected_option_ids]
+          properties:
+            type: {type: string, const: MULTIPLE_CHOICE}
+            selected_option_ids:
+              type: array
+              uniqueItems: true
+              items: {$ref: '#/components/schemas/Id'}
+        - type: object
+          required: [type, choices]
+          properties:
+            type: {type: string, const: CATEGORY_CHOICE}
+            choices:
+              type: array
+              items:
+                type: object
+                required: [statement_id, value]
+                properties:
+                  statement_id: {$ref: '#/components/schemas/Id'}
+                  value: {type: boolean}
+    SaveAnswerRequest:
+      type: object
+      required: [answer, client_revision, marked_for_review]
+      properties:
+        answer:
+          oneOf:
+            - {$ref: '#/components/schemas/AnswerPayload'}
+            - {type: 'null'}
+        client_revision: {type: integer, minimum: 1}
+        marked_for_review: {type: boolean}
+    SaveAnswerReceipt:
+      type: object
+      required: [status, server_revision, saved_at]
+      properties:
+        status: {type: string, const: persisted}
+        server_revision: {type: integer, minimum: 1}
+        saved_at: {type: string, format: date-time}
+    SubmissionReceipt:
+      type: object
+      required: [attempt_id, status, submitted_at, receipt_id]
+      properties:
+        attempt_id: {$ref: '#/components/schemas/Id'}
+        status: {type: string, enum: [SUBMITTED, GRADED]}
+        submitted_at: {type: string, format: date-time}
+        receipt_id: {type: string}
+    StudentVisibleResult:
+      type: object
+      required: [attempt_id, total_score, max_score, graded_at]
+      properties:
+        attempt_id: {$ref: '#/components/schemas/Id'}
+        total_score: {type: number, minimum: 0}
+        max_score: {type: number, minimum: 0}
+        graded_at: {type: string, format: date-time}
+    ReviewResponse:
+      type: object
+      properties:
+        attempt_id: {$ref: '#/components/schemas/Id'}
+        questions:
+          type: array
+          items:
+            type: object
+            properties:
+              question: {$ref: '#/components/schemas/StudentQuestion'}
+              own_answer: {$ref: '#/components/schemas/AnswerPayload'}
+              correct_answer: {description: Included ONLY if policy show_correct_answers true}
+              explanation: {type: string, description: Only when policy show_explanations true}
+    MonitorResponse:
+      type: object
+      required: [exam_id, server_now, counts, participants]
+      properties:
+        exam_id: {$ref: '#/components/schemas/Id'}
+        server_now: {type: string, format: date-time}
+        counts:
+          type: object
+          properties:
+            active: {type: integer}
+            paused: {type: integer}
+            disconnected: {type: integer}
+            submitted: {type: integer}
+        participants:
+          type: array
+          items:
+            type: object
+            properties:
+              student_id: {$ref: '#/components/schemas/Id'}
+              display_name: {type: string}
+              state: {type: string}
+              answered_count: {type: integer}
+              total_count: {type: integer}
+              pause_consumed_seconds: {type: integer}
+    ProctorActionReason:
+      type: object
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 10, maxLength: 500}
+    TimeExtensionRequest:
+      type: object
+      required: [seconds, reason]
+      properties:
+        seconds: {type: integer, minimum: 60, maximum: 7200, description: Upper bound technical proposal; school policy may tighten}
+        reason: {type: string, minLength: 10, maxLength: 500}
+    CreateAnnouncement:
+      type: object
+      required: [message]
+      properties:
+        message: {type: string, minLength: 1, maxLength: 500}
+    TeacherResultRow:
+      type: object
+      required: [student_id, attempt_id, status]
+      properties:
+        student_id: {$ref: '#/components/schemas/Id'}
+        attempt_id: {$ref: '#/components/schemas/Id'}
+        status: {type: string, enum: [NOT_STARTED, IN_PROGRESS, SUBMITTED, GRADED]}
+        score: {type: [number, 'null']}
+        max_score: {type: [number, 'null']}
+    HealthResponse:
+      type: object
+      required: [server_status, database_status, disk_status]
+      properties:
+        server_status: {type: string, enum: [OK, DEGRADED, DOWN]}
+        database_status: {type: string, enum: [OK, DEGRADED, DOWN]}
+        disk_status: {type: string, enum: [OK, WARNING, CRITICAL]}
+        last_verified_backup_at: {type: [string, 'null'], format: date-time}

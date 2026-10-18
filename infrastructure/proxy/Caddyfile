@@ -1,0 +1,30 @@
+# M1-03 proof: HTTPS same-origin untuk web + API + WebSocket, semua aset lokal.
+# `tls internal` = CA lokal Caddy, HANYA untuk proof. Strategi trust sertifikat di HP/BYOD
+# masih OPEN (ADR-003, DEC-05) — jangan minta siswa klik-lewat peringatan sertifikat.
+{$LOCALCBT_HOST:cbt.sekolah.test} {
+	tls internal
+
+	encode gzip
+
+	handle /api/* {
+		# Uvicorn hanya listen di 127.0.0.1; reverse_proxy meneruskan WebSocket otomatis.
+		reverse_proxy {$LOCALCBT_API:127.0.0.1:8000} {
+			header_up X-Request-ID {http.request.uuid}
+		}
+	}
+
+	handle {
+		root * {$LOCALCBT_WEB_ROOT:../../apps/web/dist}
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		# Semua aset lokal: tidak ada CDN/Google Fonts.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+	}
+}
