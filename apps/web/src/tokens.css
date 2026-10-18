@@ -405,3 +405,73 @@ legend {
 	float: left;
 	width: 100%;
 }
+
+/* ---- Ujian ---- */
+.tabs {
+	display: flex;
+	gap: var(--space-1);
+	border-bottom: 1px solid var(--border);
+}
+.tabs a {
+	display: inline-flex;
+	align-items: center;
+	min-height: 44px;
+	padding: 0 var(--space-4);
+	color: var(--text-secondary);
+	text-decoration: none;
+	font-weight: 600;
+	border-bottom: 3px solid transparent;
+}
+.tabs a[aria-current="page"] {
+	color: var(--brand-600);
+	border-bottom-color: var(--brand-600);
+}
+.chip {
+	display: inline-block;
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	padding: 0 var(--space-2);
+	font-size: 12px;
+	font-weight: 600;
+}
+.chip-draft {
+	color: var(--text-secondary);
+}
+.chip-published {
+	color: var(--brand-600);
+}
+.chip-active {
+	color: var(--success);
+}
+.chip-closed {
+	color: var(--text-secondary);
+}
+.picker {
+	border: 1px solid var(--border);
+	border-radius: var(--radius-control);
+	padding: var(--space-2) var(--space-3);
+}
+.picker summary {
+	min-height: 44px;
+	display: flex;
+	align-items: center;
+	font-weight: 600;
+	cursor: pointer;
+}
+.pick-row {
+	align-items: flex-start;
+	padding: var(--space-2) 0;
+	border-top: 1px solid var(--border);
+}
+.pick-row input {
+	margin-top: 4px;
+}
+.dialog {
+	max-width: 560px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-card);
+	padding: var(--space-6);
+}
+.dialog::backdrop {
+	background: rgb(15 23 42 / 50%);
+}

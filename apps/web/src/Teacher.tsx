@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { ExamsPage } from "./Exams";
 import {
 	type Question,
 	QuestionEditor,
@@ -36,8 +37,41 @@ const ACCESS_LABEL: Record<Access, string> = {
 };
 
 export function TeacherPage({ path }: { path: string }) {
+	const onExams = path.startsWith("/teacher/exams");
 	const bankId = path.match(/^\/teacher\/questions\/([0-9a-f-]{36})$/)?.[1];
-	return bankId ? <BankDetail key={bankId} bankId={bankId} /> : <BankList />;
+	return (
+		<div className="stack-lg">
+			<nav className="tabs" aria-label="Menu guru">
+				<a
+					href="/teacher/questions"
+					aria-current={onExams ? undefined : "page"}
+					onClick={(e) => {
+						e.preventDefault();
+						navigate("/teacher/questions");
+					}}
+				>
+					Bank soal
+				</a>
+				<a
+					href="/teacher/exams"
+					aria-current={onExams ? "page" : undefined}
+					onClick={(e) => {
+						e.preventDefault();
+						navigate("/teacher/exams");
+					}}
+				>
+					Ujian
+				</a>
+			</nav>
+			{onExams ? (
+				<ExamsPage path={path} />
+			) : bankId ? (
+				<BankDetail key={bankId} bankId={bankId} />
+			) : (
+				<BankList />
+			)}
+		</div>
+	);
 }
 
 function BankList() {

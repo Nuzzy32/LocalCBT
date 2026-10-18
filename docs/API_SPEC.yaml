@@ -401,7 +401,9 @@ paths:
   /exams/{examId}/publish:
     post:
       tags: [Exams]
-      summary: Validasi dan bekukan snapshot ujian
+      summary: |
+        Validasi lalu bekukan snapshot (soal/opsi/kunci/stimulus) dalam satu transaksi.
+        Guru wajib mengonfirmasi versi aturan penilaian (DEC-01 belum disahkan sekolah).
       operationId: publishExam
       x-roles: [TEACHER]
       parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
@@ -413,7 +415,8 @@ paths:
               type: object
               properties:
                 confirm: {type: boolean, const: true}
-              required: [confirm]
+                scoring_rule_version: {type: string, enum: [PROPOSED-1]}
+              required: [confirm, scoring_rule_version]
       responses:
         '200':
           description: Published snapshot frozen
@@ -421,7 +424,61 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ExamSummary'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '422': {description: 'PUBLISH_INVALID: jadwal lewat, soal dihapus/tak boleh dipakai, kelas tak diajar'}
         '403': {$ref: '#/components/responses/Forbidden'}
+  /exams/{examId}:
+    parameters: [{$ref: '#/components/parameters/ExamId'}]
+    get:
+      tags: [Exams]
+      summary: Detail ujian milik guru + teks aturan penilaian; token tidak pernah dikembalikan
+      operationId: getExam
+      x-roles: [TEACHER]
+      responses:
+        '200': {description: ExamSummary + class_ids, question_ids, result_policy, scoring_rule}
+        '404': {$ref: '#/components/responses/NotFound'}
+    put:
+      tags: [Exams]
+      summary: Ubah draft (409 bila sudah dipublish); token kosong = tidak diubah
+      operationId: updateExam
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateExam'}
+      responses:
+        '200': {description: Draft tersimpan}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /exams/{examId}/token:
+    put:
+      tags: [Exams]
+      summary: Ganti token (kapan pun); hanya hash Argon2 yang disimpan
+      operationId: rotateExamToken
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, minLength: 4, maxLength: 32, writeOnly: true}
+      responses:
+        '204': {description: Token diganti}
+  /exams/{examId}/unpublish:
+    post:
+      tags: [Exams]
+      summary: Tarik ke draft (hanya sebelum start window dibuka; M5 juga mensyaratkan belum ada attempt)
+      operationId: unpublishExam
+      x-roles: [TEACHER]
+      parameters: [{$ref: '#/components/parameters/ExamId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '200': {description: Snapshot dihapus, status DRAFT}
+        '409': {$ref: '#/components/responses/Conflict'}
   /question-banks/{bankId}:
     get:
       tags: [Question Bank]
@@ -1347,7 +1404,10 @@ components:
         shuffle_questions: {type: boolean, const: true, default: true}
         shuffle_options: {type: boolean, const: true, default: true}
         result_policy: {$ref: '#/components/schemas/ResultPolicy'}
-      description: Server validates start_window_until after start_window_from and immutable on publish. Scoring rule version must be confirmed before publish.
+      description: |
+        Server validates start_window_until after start_window_from and immutable on publish.
+        Scoring rule version must be confirmed before publish. Kelas harus diajar guru untuk mapel
+        ini; soal harus aktif, mapel sama, di bank milik sendiri atau dibagikan minimal COPY.
     ResultPolicy:
       type: object
       required: [visibility, review_enabled]
@@ -1363,10 +1423,17 @@ components:
       properties:
         id: {$ref: '#/components/schemas/Id'}
         title: {type: string}
-        status: {type: string, enum: [DRAFT, PUBLISHED, ACTIVE, CLOSED, ARCHIVED]}
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED, ACTIVE, CLOSED, ARCHIVED]
+          description: ACTIVE/CLOSED diturunkan dari waktu server; yang disimpan hanya DRAFT/PUBLISHED
         duration_seconds: {type: integer}
         start_window_from: {type: string, format: date-time}
         start_window_until: {type: string, format: date-time}
+        subject_name: {type: string}
+        class_names: {type: string}
+        question_count: {type: integer}
+        scoring_rule_version: {type: [string, 'null']}
     StudentExamSummary:
       type: object
       required: [id, title, status, duration_seconds]

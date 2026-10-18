@@ -21,7 +21,7 @@ function allowed(me: Me, path: string): boolean {
 
 const TITLES: Record<string, string> = {
 	"/admin": "Administrasi",
-	"/teacher": "Bank soal",
+	"/teacher": "Guru",
 	"/proctor": "Pengawasan",
 	"/student": "Ujian saya",
 };

@@ -93,7 +93,7 @@ def get_bank(db: Connection, user: CurrentUser, bank_id: UUID, need: Access) -> 
 
 
 def load_questions(
-    db: Connection, bank_id: UUID, ids: list[UUID] | None = None
+    db: Connection, bank_id: UUID | None, ids: list[UUID] | None = None
 ) -> list[dict[str, Any]]:
     """Soal aktif lengkap DENGAN kunci (hanya untuk staf). Untuk siswa: to_student_question."""
     rows = db.execute(
@@ -111,7 +111,8 @@ def load_questions(
                  as statements
         from questions q
         left join stimuli s on s.id = q.stimulus_id
-        where q.bank_id = :b and q.active and (cast(:ids as uuid[]) is null or q.id = any(:ids))
+        where (cast(:b as uuid) is null or q.bank_id = :b) and q.active
+          and (cast(:ids as uuid[]) is null or q.id = any(:ids))
         order by coalesce(s.created_at, q.created_at), q.created_at
         """),
         {"b": bank_id, "ids": ids},

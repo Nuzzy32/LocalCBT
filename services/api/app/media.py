@@ -89,7 +89,10 @@ def media_readable(db: Connection, user_id: UUID, media_id: UUID) -> bool:
               or exists (select 1 from questions q
                          where q.media_asset_id = m.id and q.bank_id in ({VISIBLE_BANKS}))
               or exists (select 1 from stimuli s
-                         where s.media_asset_id = m.id and s.bank_id in ({VISIBLE_BANKS})))
+                         where s.media_asset_id = m.id and s.bank_id in ({VISIBLE_BANKS}))
+              or exists (select 1 from exam_question_snapshots x join exams e on e.id = x.exam_id
+                         where m.id in (x.media_asset_id, x.stimulus_media_asset_id)
+                           and e.author_teacher_id = :uid))
             """),  # noqa: S608 — fragmen konstan, bukan input
             {"id": media_id, "uid": user_id},
         )
