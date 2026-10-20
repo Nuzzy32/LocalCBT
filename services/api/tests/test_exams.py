@@ -273,6 +273,24 @@ def test_unpublish_only_before_window_opens(setup: dict[str, Any]) -> None:
     assert c.post(f"/api/v1/exams/{started}/unpublish").status_code == 409
 
 
+def test_publish_unpublish_and_token_rotation_are_audited(setup: dict[str, Any]) -> None:
+    c = setup["client"]
+    exam = _create(setup)
+    c.post(f"/api/v1/exams/{exam}/publish", json=PUBLISH)
+    c.put(f"/api/v1/exams/{exam}/token", json={"token": "BARU1234"})
+    c.post(f"/api/v1/exams/{exam}/unpublish")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "select action, target_id::text, metadata::text from audit_events"
+                " order by created_at"
+            )
+        ).all()
+    assert [r.action for r in rows] == ["EXAM_PUBLISHED", "EXAM_TOKEN_ROTATED", "EXAM_UNPUBLISHED"]
+    assert all(r.target_id == exam for r in rows)
+    assert not any("BARU1234" in r.metadata or TOKEN in r.metadata for r in rows)
+
+
 def test_result_policy_editable_after_publish(setup: dict[str, Any]) -> None:
     c = setup["client"]
     exam = _create(setup)

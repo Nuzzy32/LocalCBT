@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import anyio
-from fastapi import APIRouter, Depends, WebSocket
+from fastapi import APIRouter, Depends, Request, WebSocket
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, text
@@ -176,8 +176,9 @@ def monitor(db: Connection, exam_id: UUID) -> dict[str, Any]:
     )
     announcements = db.execute(
         text("""
-        select message, issued_at from announcements where exam_id = :e
-        order by issued_at desc limit 20
+        select a.message, a.issued_at, u.display_name as sender
+        from announcements a join users u on u.id = a.created_by
+        where a.exam_id = :e order by a.issued_at desc limit 20
         """),
         {"e": exam_id},
     )
@@ -192,7 +193,10 @@ def monitor(db: Connection, exam_id: UUID) -> dict[str, Any]:
             for k in ("NOT_STARTED", "ACTIVE", "DISCONNECTED", "PAUSED", "SUBMITTED")
         },
         "participants": participants,
-        "announcements": [{"message": a.message, "issued_at": a.issued_at} for a in announcements],
+        "announcements": [
+            {"message": a.message, "issued_at": a.issued_at, "sender": a.sender}
+            for a in announcements
+        ],
     }
 
 
@@ -283,10 +287,10 @@ def attempt_events(attempt_id: UUID, user: Supervisor, db: DB) -> list[dict[str,
 @router.post("/proctor/attempts/{attempt_id}/approve-device-switch")
 @router.post("/proctor/attempts/{attempt_id}/reset-session")
 def approve_device_switch(
-    attempt_id: UUID, body: ReasonIn, user: Supervisor, db: DB
+    attempt_id: UUID, body: ReasonIn, user: Supervisor, db: DB, request: Request
 ) -> dict[str, Any]:
-    """Izin sekali pakai (5 menit) agar siswa bisa login di perangkat lain. Sesi lama dicabut
-    saat login baru memakai izin ini; attempt, jawaban, dan jatah jeda tidak berubah."""
+    """FR-REC-07: sesi lama siswa langsung dicabut, lalu izin sekali pakai (5 menit) agar siswa
+    bisa login lagi di perangkat mana pun. Attempt, jawaban, dan jatah jeda tidak berubah."""
     attempt = supervised_attempt(db, user, attempt_id, "DEVICE_SWITCH")
     if attempt.state not in ("IN_PROGRESS", "PAUSED"):
         raise ApiError(409, "ATTEMPT_LOCKED", "Ujian peserta ini sudah selesai.")
@@ -297,7 +301,17 @@ def approve_device_switch(
         """),
         {"id": attempt_id, "s": SWITCH_PERMIT_SECONDS},
     )
-    audit(db, user.id, "DEVICE_SWITCH_APPROVED", "exam_attempt", attempt_id, body.reason)
+    db.execute(
+        text(
+            "delete from sessions where user_id = (select student_id from exam_attempts"
+            " where id = :id)"
+        ),
+        {"id": attempt_id},
+    )
+    action = (
+        "SESSION_RESET" if request.url.path.endswith("/reset-session") else "DEVICE_SWITCH_APPROVED"
+    )
+    audit(db, user.id, action, "exam_attempt", attempt_id, body.reason)
     return {"attempt_id": str(attempt_id), "permit_expires_at": until}
 
 
@@ -351,5 +365,13 @@ def create_announcement(
         returning issued_at
         """),
         {"e": exam_id, "u": user.id, "m": body.message.strip()},
+    )
+    audit(
+        db,
+        user.id,
+        "ANNOUNCEMENT_SENT",
+        "exam",
+        exam_id,
+        metadata={"message": body.message.strip()},
     )
     return {"message": body.message.strip(), "issued_at": issued}

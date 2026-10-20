@@ -298,12 +298,13 @@ class TokenIn(BaseModel):
 
 @router.put("/exams/{exam_id}/token", status_code=204)
 def rotate_token(exam_id: UUID, body: TokenIn, user: Teacher, db: DB) -> None:
-    # Boleh kapan pun (mis. token bocor saat ujian). TODO(M8): audit_events token_rotated.
+    # Boleh kapan pun (mis. token bocor saat ujian). Token tidak ikut diaudit, hanya kejadiannya.
     get_exam(db, user, exam_id, lock=True)
     db.execute(
         text("update exams set token_hash = :h, updated_at = now() where id = :id"),
         {"h": hash_password(body.token), "id": exam_id},
     )
+    audit(db, user.id, "EXAM_TOKEN_ROTATED", "exam", exam_id)
 
 
 @router.put("/teacher/exams/{exam_id}/result-policy")
@@ -381,6 +382,14 @@ def publish_exam(exam_id: UUID, body: PublishIn, user: Teacher, db: DB) -> dict[
         """),
         {"id": exam_id, "rule": body.scoring_rule_version},
     )
+    audit(
+        db,
+        user.id,
+        "EXAM_PUBLISHED",
+        "exam",
+        exam_id,
+        metadata={"scoring_rule_version": body.scoring_rule_version, "questions": inserted},
+    )
     return exam_out(get_exam(db, user, exam_id))
 
 
@@ -401,6 +410,7 @@ def unpublish_exam(exam_id: UUID, user: Teacher, db: DB) -> dict[str, Any]:
         """),
         {"id": exam_id},
     )
+    audit(db, user.id, "EXAM_UNPUBLISHED", "exam", exam_id)
     return exam_out(get_exam(db, user, exam_id))
 
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import Connection, RowMapping, text
 
 from app.auth import CurrentUser, require_roles
-from app.db import DB
+from app.db import DB, audit
 from app.errors import ApiError, forbidden, not_found
 from app.media import media_readable, media_url
 
@@ -471,7 +471,6 @@ def share_bank(bank_id: UUID, body: ShareIn, user: Teacher, db: DB) -> dict[str,
         {"t": body.teacher_id},
     ):
         raise ApiError(422, "INVALID_REFERENCE", "Pilih guru lain sebagai penerima.")
-    # TODO(M8): audit_events untuk perubahan akses bank soal.
     db.execute(
         text("""
         insert into bank_shares (bank_id, teacher_id, permission, granted_by)
@@ -479,6 +478,14 @@ def share_bank(bank_id: UUID, body: ShareIn, user: Teacher, db: DB) -> dict[str,
         on conflict (bank_id, teacher_id) do update set permission = :p, granted_by = :uid
         """),
         {"b": bank_id, "t": body.teacher_id, "p": body.permission, "uid": user.id},
+    )
+    audit(
+        db,
+        user.id,
+        "BANK_SHARED",
+        "question_bank",
+        bank_id,
+        metadata={"teacher_id": str(body.teacher_id), "permission": body.permission},
     )
     return {"teacher_id": str(body.teacher_id), "permission": body.permission}
 
@@ -489,4 +496,12 @@ def revoke_share(bank_id: UUID, teacher_id: UUID, user: Teacher, db: DB) -> None
     db.execute(
         text("delete from bank_shares where bank_id = :b and teacher_id = :t"),
         {"b": bank_id, "t": teacher_id},
+    )
+    audit(
+        db,
+        user.id,
+        "BANK_SHARE_REVOKED",
+        "question_bank",
+        bank_id,
+        metadata={"teacher_id": str(teacher_id)},
     )

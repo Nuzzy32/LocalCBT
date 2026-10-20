@@ -304,11 +304,34 @@ def test_announcements_persisted_and_scoped(exam: dict[str, Any]) -> None:
     assert beat["announcements_count"] == 1
     listed = exam["student"].get(f"/api/v1/student/attempts/{att['id']}/announcements").json()
     assert [a["message"] for a in listed] == ["Sisa waktu 30 menit, periksa kembali jawaban."]
+    snap = exam["client"].get(f"/api/v1/proctor/exams/{exam['exam']}/monitor").json()
+    assert snap["announcements"][0]["sender"] == "guru.a"
+    assert "ANNOUNCEMENT_SENT" in _sql("select action from audit_events").scalars().all()
     make_user("0099999", "STUDENT")
     assert (
         login("0099999").get(f"/api/v1/student/attempts/{att['id']}/announcements").status_code
         == 404
     )
+
+
+def test_admin_sees_intervention_history_across_exams(exam: dict[str, Any]) -> None:
+    att = start(exam["student"], exam["exam"]).json()
+    base = f"/api/v1/proctor/attempts/{att['id']}"
+    exam["client"].post(f"{base}/time-extensions", json={"seconds": 300, "reason": "Listrik padam"})
+    exam["client"].post(f"{base}/reset-session", json={"reason": "Browser siswa macet total"})
+    make_user("admin", "ADMIN")
+    admin = login("admin")
+    admin.post(
+        f"/api/v1/admin/students/{exam['student_id']}/password-reset",
+        json={"reason": "Siswa lupa kata sandi"},
+    )
+    rows = admin.get("/api/v1/admin/interventions").json()
+    assert [(r["action"], r["exam"], r["nis"], r["actor"]) for r in rows] == [
+        ("STUDENT_PASSWORD_RESET", None, "0012345", "admin"),
+        ("SESSION_RESET", "PTS Matematika", "0012345", "guru.a"),
+        ("TIME_EXTENDED", "PTS Matematika", "0012345", "guru.a"),
+    ]
+    assert rows[2]["seconds"] == 300
 
 
 # ---- Hasil ---------------------------------------------------------------------

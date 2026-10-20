@@ -24,7 +24,7 @@ Catatan:
   perangkat lama.
 - Sesi guru berlaku sampai 12 jam. Tekan **Keluar** di kanan atas bila selesai.
 
-Menu guru ada dua tab: **Bank soal** dan **Ujian**.
+Menu guru ada tiga tab: **Bank soal**, **Ujian**, dan **Pengawasan**.
 
 ---
 
@@ -184,7 +184,8 @@ Publish ditolak bila: ada kelas yang tidak Anda ajar, ada soal yang sudah dihapu
 mapel/tidak boleh dipakai, belum ada kelas atau soal, atau **Batas akhir mulai** sudah lewat.
 
 ### 4.3 Soal dibekukan (snapshot)
-Saat publish, isi soal, opsi, kunci, dan bobot **disalin dan dikunci**. Akibatnya:
+Saat publish, isi soal, opsi, kunci, dan bobot **disalin dan dikunci**. Publish dan tarik
+publish tercatat di log audit. Akibatnya:
 - Mengedit atau menghapus soal di bank **tidak mengubah** ujian yang sudah dipublish.
 - Nilai siswa selalu dihitung dari salinan beku ini.
 - Salah kunci setelah publish **tidak bisa diperbaiki** dari bank. Periksa dengan teliti
@@ -195,7 +196,8 @@ Status ujian: **Terjadwal** → **Berlangsung** → **Selesai**.
 
 Yang masih bisa diubah:
 - **Ganti token**: isi **Token baru**, tekan **Ganti token**. Siswa yang sudah mulai tidak
-  terpengaruh.
+  terpengaruh. Penggantian tercatat di log audit (siapa dan kapan; tokennya sendiri tidak
+  disimpan).
 - **Nilai & pembahasan**: ubah lalu tekan **Simpan kebijakan nilai**.
 - **Pengawas**: tugaskan atau lepas pengawas.
 
@@ -218,8 +220,8 @@ berikan token kepada pengawas secara langsung.
 
 ### 5.2 Memantau
 - Ujian sendiri: tekan **Pantau** di halaman ujian.
-- Ditugaskan mengawasi ujian guru lain: buka alamat portal ditambah `/proctor`
-  (contoh `https://cbt.sekolah.test/proctor`). Menu guru belum punya tautan ke halaman ini.
+- Ditugaskan mengawasi ujian guru lain: buka tab **Pengawasan** di menu guru. Daftarnya
+  berisi ujian Anda sendiri dan ujian yang menugaskan Anda sebagai pengawas.
 
 Cara kerja monitor, jeda otomatis, tambah waktu, dan pindah perangkat dijelaskan di
 **[SOP Pengawas](PROCTOR_SOP.md)**.

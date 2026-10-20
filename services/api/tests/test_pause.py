@@ -191,13 +191,16 @@ def test_t007_device_switch_requires_supervisor_permit(exam: dict[str, Any]) -> 
     assert login("guru.b").post(url, json={"reason": "Laptop siswa mati total"}).status_code == 404
     r = exam["client"].post(url, json={"reason": "Laptop siswa mati total"})
     assert r.status_code == 200 and r.json()["permit_expires_at"]
+    assert old.get("/api/v1/auth/me").status_code == 401  # dicabut saat disetujui (FR-REC-07)
 
-    new = login("0012345")  # izin dipakai: sesi lama dicabut
+    new = login("0012345")  # izin dipakai
     assert new.get(f"/api/v1/student/attempts/{attempt_id}").json()["id"] == attempt_id
-    assert old.get("/api/v1/auth/me").status_code == 401
     assert new_client().post("/api/v1/auth/login", json=creds).status_code == 409  # sekali pakai
     assert _sql("select switch_permit_until from exam_attempts").scalar() is None
-    audit = _sql("select action, reason from audit_events order by created_at").all()
+    audit = _sql(
+        "select action, reason from audit_events where target_type = 'exam_attempt'"
+        " order by created_at"
+    ).all()
     assert [tuple(r) for r in audit] == [
         ("PROCTOR_ACTION_DENIED", None),  # guru lain yang bukan pengawas (T-021)
         ("DEVICE_SWITCH_APPROVED", "Laptop siswa mati total"),
@@ -215,12 +218,30 @@ def test_device_switch_rejected_for_finished_attempt(exam: dict[str, Any]) -> No
     assert r.status_code == 409
 
 
-def test_expired_permit_does_not_allow_login(exam: dict[str, Any]) -> None:
+def test_reset_session_revokes_old_device_and_is_audited_as_reset(exam: dict[str, Any]) -> None:
     attempt_id = _attempt(exam)
-    exam["client"].post(
+    old = exam["student"]
+    r = exam["client"].post(
         f"/api/v1/proctor/attempts/{attempt_id}/reset-session",
-        json={"reason": "Siswa minta pindah perangkat"},
+        json={"reason": "Browser siswa macet total"},
     )
-    _sql("update exam_attempts set switch_permit_until = now() - interval '1 second'")
+    assert r.status_code == 200
+    assert old.get("/api/v1/auth/me").status_code == 401
+    assert _sql(
+        "select action, reason from audit_events where target_type = 'exam_attempt'"
+    ).one() == (
+        "SESSION_RESET",
+        "Browser siswa macet total",
+    )
+
+
+def test_idle_session_cannot_switch_device_during_exam(exam: dict[str, Any]) -> None:
+    # BR-21: jendela "sesi basi" tidak berlaku selama attempt berjalan.
+    _attempt(exam)
+    _sql(
+        "update sessions set last_seen_at = now() - make_interval(secs => :s)",
+        s=settings.student_session_stale_seconds + 60,
+    )
     creds = {"username": "0012345", "password": PASSWORD}
-    assert new_client().post("/api/v1/auth/login", json=creds).status_code == 409
+    r = new_client().post("/api/v1/auth/login", json=creds)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "SESSION_ACTIVE"

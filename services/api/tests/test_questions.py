@@ -241,6 +241,9 @@ def test_revoked_share_loses_access_and_owner_sees_both_lists(
     assert owner.delete(f"{QB}/{bank}/shares/{b_id}").status_code == 204
     assert other.get(f"{QB}/{bank}/questions").status_code == 404
     assert other.get(QB).json() == []
+    with engine.connect() as conn:
+        actions = conn.scalars(text("select action from audit_events order by created_at")).all()
+    assert actions == ["BANK_SHARED", "BANK_SHARE_REVOKED"]
 
 
 def test_cannot_copy_into_bank_without_edit(owner: TestClient, subject_id: str) -> None:

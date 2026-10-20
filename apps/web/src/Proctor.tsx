@@ -26,7 +26,7 @@ type Snapshot = {
 	total_count: number;
 	counts: Record<string, number>;
 	participants: Participant[];
-	announcements: { message: string; issued_at: string }[];
+	announcements: { message: string; issued_at: string; sender: string }[];
 };
 type SupervisedExam = {
 	id: string;
@@ -64,6 +64,7 @@ const EVENT_LABEL: Record<string, string> = {
 	TAB_HIDDEN: "Pindah tab / aplikasi",
 	TIME_EXTENDED: "Tambah waktu",
 	DEVICE_SWITCH_APPROVED: "Izin pindah perangkat",
+	SESSION_RESET: "Reset sesi",
 };
 const fmtTime = (iso: string) =>
 	new Date(iso).toLocaleTimeString("id-ID", {
@@ -564,7 +565,7 @@ function Announcements({
 				<ul className="rules">
 					{items.map((a) => (
 						<li key={a.issued_at}>
-							{fmtTime(a.issued_at)} · {a.message}
+							{fmtTime(a.issued_at)} · {a.sender}: {a.message}
 						</li>
 					))}
 				</ul>

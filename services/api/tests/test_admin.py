@@ -135,6 +135,8 @@ ADMIN_ONLY = [
     ("POST", "/api/v1/admin/staff"),
     ("POST", "/api/v1/admin/teaching-assignments"),
     ("POST", "/api/v1/admin/students/00000000-0000-0000-0000-000000000000/password-reset"),
+    ("GET", "/api/v1/admin/students?nis=0012345"),
+    ("GET", "/api/v1/admin/interventions"),
     ("POST", PREVIEW),
     ("POST", COMMIT),
 ]
@@ -199,6 +201,17 @@ def test_password_reset_only_for_students_and_revokes_sessions(admin: TestClient
     assert r.status_code == 200
     assert session.get("/api/v1/auth/me").status_code == 401
     login("0012345", r.json()["temporary_password"])
+    with engine.connect() as c:
+        row = c.execute(text("select action, target_id::text, reason from audit_events")).one()
+    assert tuple(row) == ("STUDENT_PASSWORD_RESET", student_id, reason["reason"])
+
+
+def test_find_student_by_nis_only_returns_students(admin: TestClient) -> None:
+    student_id = make_user("0012345", "STUDENT", name="Ahmad")
+    make_user("guru1", "TEACHER")
+    r = admin.get("/api/v1/admin/students", params={"nis": " 0012345 "})
+    assert r.json() == {"id": student_id, "nis": "0012345", "display_name": "Ahmad"}
+    assert admin.get("/api/v1/admin/students", params={"nis": "guru1"}).status_code == 404
 
 
 def test_duplicate_class_is_conflict(admin: TestClient, make_class: Callable[[str], str]) -> None:

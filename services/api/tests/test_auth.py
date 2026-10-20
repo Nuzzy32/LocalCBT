@@ -106,6 +106,10 @@ def test_student_second_login_blocked_until_session_stale() -> None:
         )
     login("0012345")
     assert first.get("/api/v1/auth/me").status_code == 401
+    with engine.connect() as c:
+        assert c.scalars(text("select action from audit_events")).all() == [
+            "STALE_SESSION_TAKEOVER"
+        ]
 
 
 def test_every_route_requires_auth_except_allowlist() -> None:

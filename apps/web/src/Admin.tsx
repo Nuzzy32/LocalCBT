@@ -10,6 +10,23 @@ type Staff = {
 	display_name: string;
 	roles: string[];
 };
+type Intervention = {
+	created_at: string;
+	action: string;
+	reason: string | null;
+	seconds: number | null;
+	actor: string | null;
+	nis: string;
+	student: string;
+	exam: string | null;
+};
+const ACTION_LABEL: Record<string, string> = {
+	SESSION_RESET: "Reset sesi",
+	DEVICE_SWITCH_APPROVED: "Izin pindah perangkat",
+	TIME_EXTENDED: "Tambah waktu",
+	STALE_SESSION_TAKEOVER: "Login ulang (sesi lama ditinggal)",
+	STUDENT_PASSWORD_RESET: "Reset kata sandi",
+};
 type Credential = {
 	nis: string;
 	name: string;
@@ -75,6 +92,70 @@ function StudentImport({ onDone }: { onDone: () => void }) {
 	);
 }
 
+function Interventions() {
+	const [rows, setRows] = useState<Intervention[] | null>(null);
+	const [error, setError] = useState("");
+	const load = useCallback(() => {
+		api<Intervention[]>("/admin/interventions")
+			.then((r) => {
+				setRows(r);
+				setError("");
+			})
+			.catch((err) => setError(message(err)));
+	}, []);
+	useEffect(load, [load]);
+
+	return (
+		<section className="card stack" aria-labelledby="h-interventions">
+			<h2 id="h-interventions">Riwayat intervensi</h2>
+			<p className="muted">
+				Reset sesi, pindah perangkat, tambah waktu, dan reset kata sandi siswa
+				di semua ujian (500 terbaru).
+			</p>
+			<Alert kind="error">{error}</Alert>
+			{rows?.length === 0 && <p className="muted">Belum ada intervensi.</p>}
+			{rows && rows.length > 0 && (
+				<div className="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th scope="col">Waktu</th>
+								<th scope="col">Tindakan</th>
+								<th scope="col">Siswa</th>
+								<th scope="col">Ujian</th>
+								<th scope="col">Oleh</th>
+								<th scope="col">Alasan</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.map((r) => (
+								<tr key={`${r.created_at}-${r.action}-${r.nis}`}>
+									<td>{new Date(r.created_at).toLocaleString("id-ID")}</td>
+									<td>
+										{ACTION_LABEL[r.action] ?? r.action}
+										{r.seconds ? ` (+${Math.round(r.seconds / 60)} menit)` : ""}
+									</td>
+									<td>
+										{r.student} ({r.nis})
+									</td>
+									<td>{r.exam ?? "—"}</td>
+									<td>{r.actor ?? "—"}</td>
+									<td>{r.reason ?? "—"}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)}
+			<div>
+				<button type="button" className="btn btn-secondary" onClick={load}>
+					Muat ulang
+				</button>
+			</div>
+		</section>
+	);
+}
+
 export function Admin() {
 	const [classes, setClasses] = useState<Klass[]>([]);
 	const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -84,6 +165,7 @@ export function Admin() {
 		username: string;
 		password: string;
 	} | null>(null);
+	const [historyKey, setHistoryKey] = useState(0);
 
 	const reload = useCallback(() => {
 		Promise.all([
@@ -291,6 +373,46 @@ export function Admin() {
 				<h2 id="h-import">Import siswa</h2>
 				<StudentImport onDone={reload} />
 			</section>
+
+			<section className="card stack" aria-labelledby="h-reset">
+				<h2 id="h-reset">Reset kata sandi siswa</h2>
+				<p className="muted">
+					Membuat kata sandi sementara baru dan mengeluarkan siswa dari semua
+					perangkat. Alasan dicatat di log audit.
+				</p>
+				<ActionForm
+					label="Reset kata sandi"
+					run={async (f) => {
+						const nis = String(f.get("nis"));
+						const student = await api<{ id: string; display_name: string }>(
+							`/admin/students?nis=${encodeURIComponent(nis)}`,
+						);
+						if (
+							!window.confirm(
+								`Reset kata sandi ${student.display_name} (${nis})? Siswa akan keluar dari semua perangkat.`,
+							)
+						)
+							return undefined;
+						const res = await api<{ temporary_password: string }>(
+							`/admin/students/${student.id}/password-reset`,
+							{ json: { reason: f.get("reason") } },
+						);
+						setHistoryKey((k) => k + 1);
+						return `Kata sandi baru ${student.display_name} (${nis}): ${res.temporary_password} — catat sekarang, hanya ditampilkan sekali.`;
+					}}
+				>
+					<Field label="NIS" name="nis" autoCapitalize="none" />
+					<Field
+						label="Alasan"
+						name="reason"
+						minLength={10}
+						maxLength={500}
+						placeholder="Siswa lupa kata sandi"
+					/>
+				</ActionForm>
+			</section>
+
+			<Interventions key={historyKey} />
 		</div>
 	);
 }

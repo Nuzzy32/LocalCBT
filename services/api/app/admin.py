@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import CurrentUser, generate_password, hash_password, require_roles
-from app.db import DB
+from app.db import DB, audit
 from app.errors import ApiError, not_found
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Academic Admin"])
@@ -177,9 +177,25 @@ class ReasonIn(BaseModel):
     reason: str = Field(min_length=10, max_length=500)
 
 
+@router.get("/students")
+def find_student(nis: str, _: Admin, db: DB) -> dict[str, Any]:
+    row = db.execute(
+        text("""
+        select u.id, u.username, u.display_name from users u
+        join user_roles r on r.user_id = u.id and r.role = 'STUDENT'
+        where lower(u.username) = lower(:nis)
+        """),
+        {"nis": nis.strip()},
+    ).first()
+    if row is None:
+        raise not_found()
+    return {"id": str(row.id), "nis": row.username, "display_name": row.display_name}
+
+
 @router.post("/students/{student_id}/password-reset")
-def reset_student_password(student_id: UUID, body: ReasonIn, _: Admin, db: DB) -> dict[str, str]:
-    # TODO(M8): simpan body.reason ke audit_events.
+def reset_student_password(
+    student_id: UUID, body: ReasonIn, admin: Admin, db: DB
+) -> dict[str, str]:
     password = generate_password()
     updated = db.scalar(
         text("""
@@ -194,7 +210,38 @@ def reset_student_password(student_id: UUID, body: ReasonIn, _: Admin, db: DB) -
         raise not_found()
     # Mencabut semua sesi: juga jalan keluar bila siswa terkunci "akun aktif di perangkat lain".
     db.execute(text("delete from sessions where user_id = :id"), {"id": student_id})
+    audit(db, admin.id, "STUDENT_PASSWORD_RESET", "user", student_id, body.reason)
     return {"temporary_password": password}
+
+
+# FR-PRO-06: intervensi pada siswa, lintas ujian.
+INTERVENTIONS = (
+    "SESSION_RESET",
+    "DEVICE_SWITCH_APPROVED",
+    "TIME_EXTENDED",
+    "STALE_SESSION_TAKEOVER",
+    "STUDENT_PASSWORD_RESET",
+)
+
+
+@router.get("/interventions")
+def list_interventions(_: Admin, db: DB) -> list[dict[str, Any]]:
+    rows = db.execute(
+        text("""
+        select x.created_at, x.action, x.reason, (x.metadata ->> 'seconds')::int as seconds,
+               actor.display_name as actor, s.username as nis, s.display_name as student,
+               e.title as exam
+        from audit_events x
+        left join users actor on actor.id = x.actor_id
+        left join exam_attempts a on x.target_type = 'exam_attempt' and a.id = x.target_id
+        left join exams e on e.id = a.exam_id
+        join users s on s.id = coalesce(a.student_id, x.target_id)
+        where x.action = any(:actions)
+        order by x.created_at desc limit 500
+        """),
+        {"actions": list(INTERVENTIONS)},
+    ).mappings()
+    return [dict(r) for r in rows]
 
 
 def cell_text(value: object) -> str:

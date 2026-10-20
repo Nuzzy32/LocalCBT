@@ -17,7 +17,7 @@ Prinsip utama:
 
 | ✓ | Langkah |
 |---|---|
-| ☐ | Pastikan Anda sudah ditugaskan. Masuk ke portal dari **jaringan staf**. Akun pengawas langsung masuk ke halaman **Pengawasan**; akun guru membuka alamat portal + `/proctor` (atau tombol **Pantau** untuk ujian sendiri). Ujian harus muncul di daftar. |
+| ☐ | Pastikan Anda sudah ditugaskan. Masuk ke portal dari **jaringan staf**. Akun pengawas langsung masuk ke halaman **Pengawasan**; akun guru membuka tab **Pengawasan** di menu guru (atau tombol **Pantau** untuk ujian sendiri). Ujian harus muncul di daftar. |
 | ☐ | Minta **token ujian** kepada guru pemilik. Token tidak bisa dilihat di layar pengawas dan tidak ditampilkan ulang. |
 | ☐ | Catat jadwal: **Mulai dibuka**, **Batas akhir mulai**, dan durasi. Siswa tidak bisa mulai di luar rentang ini, dan rentang tidak bisa diperpanjang setelah publish. |
 | ☐ | Tekan **Pantau**. Pastikan jumlah **Belum mulai** sama dengan jumlah siswa di daftar hadir. |
@@ -116,22 +116,28 @@ Satu akun siswa hanya boleh aktif di satu perangkat. Bila siswa login di perangk
 ia mendapat pesan "Akun masih aktif pada perangkat lain. Hubungi pengawas untuk pindah
 perangkat."
 
+Selama ujian siswa masih berjalan, pesan ini **tidak hilang dengan sendirinya**, meskipun
+perangkat lama sudah lama mati atau ditinggal: pindah perangkat **selalu** lewat pengawas.
+
 Langkah:
 1. Pastikan siswa yang meminta memang pemilik akun (cek wajah/kartu).
 2. Tekan **Tangani** atau **Detail** pada siswa itu.
 3. Isi **Alasan tindakan (wajib, min. 10 karakter)**, contoh: "HP mati, pindah ke laptop lab 3".
 4. Tekan **Izinkan pindah perangkat / reset sesi**.
 5. Muncul "Izin pindah perangkat aktif 5 menit. Minta siswa login di perangkat baru."
-6. Minta siswa login di perangkat baru **dalam 5 menit**. Lewat dari itu, ulangi langkah 2–4.
+6. Minta siswa login di perangkat baru **dalam 5 menit**. Bila login masih ditolak, ulangi
+   langkah 2–4.
 
 Yang perlu diketahui:
 - Tombol ini dipakai untuk **pindah perangkat** maupun **reset sesi**; keduanya sama.
-- Perangkat lama baru keluar **saat siswa berhasil login** di perangkat baru, bukan saat
-  tombol ditekan.
+- Perangkat lama **langsung keluar saat tombol ditekan**. Perangkat yang lebih dulu login
+  sesudahnya yang dipakai; perangkat lain yang mencoba login lagi akan ditolak.
 - Ujian, jawaban yang sudah di server, sisa waktu, dan jatah jeda **tidak berubah**.
 - Jawaban yang masih "tersimpan di perangkat" pada perangkat lama **tidak ikut pindah**.
-  Bila perangkat lama masih bisa menyala, sambungkan dulu agar jawabannya terkirim.
-- Tindakan ini tercatat (siapa, kapan, alasan).
+  Bila perangkat lama masih bisa menyala, sambungkan dulu agar jawabannya terkirim
+  **sebelum** menekan tombol; setelah tombol ditekan perangkat lama tidak bisa mengirim lagi.
+- Tindakan ini tercatat (siapa, kapan, alasan) dan bisa ditinjau admin di **Riwayat
+  intervensi**.
 - Tidak bisa dilakukan untuk siswa yang sudah **Selesai**.
 
 ---
@@ -160,6 +166,8 @@ Catatan:
 2. Tekan **Kirim pengumuman**, lalu konfirmasi.
 3. Siswa melihatnya di atas soal: "Pengumuman HH:MM: …". Siswa yang tersambung ulang tetap
    menerimanya.
+4. Di monitor, daftar pengumuman menampilkan jam, **nama pengirim**, dan isi pesan. Setiap
+   pengumuman juga tercatat di log audit.
 
 Catatan:
 - Pesan terkirim ke **semua peserta ujian ini** (belum bisa per ruang/siswa).
@@ -203,9 +211,9 @@ Catatan:
 
 ### 8.4 Siswa lupa kata sandi
 - Pengawas **tidak bisa** mengganti kata sandi.
-- Hubungi **admin/operator**. Reset kata sandi saat ini belum ada tombolnya di layar Admin;
-  operator melakukannya lewat alat teknis. Reset juga mengeluarkan siswa dari semua
-  perangkat.
+- Hubungi **admin**. Admin memakai **Reset kata sandi siswa** di halaman Administrasi
+  (isi NIS dan alasan), lalu memberikan kata sandi sementara kepada siswa. Reset juga
+  mengeluarkan siswa dari semua perangkat dan tercatat di **Riwayat intervensi**.
 - Selama menunggu, waktu siswa yang **belum mulai** tidak berjalan.
 
 ### 8.5 Pesan lain di layar siswa
@@ -250,5 +258,8 @@ untuk jawaban yang ditolak.
    jawaban ditolak, catatan pindah tab yang sudah diverifikasi).
 4. Tekan **Keluar**.
 
+Admin dapat meninjau semua reset sesi, pindah perangkat, tambah waktu, dan reset kata sandi
+lintas ujian di **Administrasi → Riwayat intervensi**.
+
 Fitur yang belum tersedia: ruang tunggu/daftar hadir terpisah, log kejadian per ujian
-(saat ini hanya per siswa di **Riwayat**), dan pengumuman per ruang.
+untuk pengawas (saat ini hanya per siswa di **Riwayat**), dan pengumuman per ruang.

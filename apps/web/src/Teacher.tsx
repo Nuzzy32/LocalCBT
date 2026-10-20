@@ -62,6 +62,16 @@ export function TeacherPage({ path }: { path: string }) {
 				>
 					Ujian
 				</a>
+				{/* Ujian sendiri + ujian guru lain yang menugaskan Anda sebagai pengawas. */}
+				<a
+					href="/proctor"
+					onClick={(e) => {
+						e.preventDefault();
+						navigate("/proctor");
+					}}
+				>
+					Pengawasan
+				</a>
 			</nav>
 			{onExams ? (
 				<ExamsPage path={path} />

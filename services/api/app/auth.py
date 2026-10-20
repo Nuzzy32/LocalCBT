@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Connection, text
 
 from app.config import settings
-from app.db import DB
+from app.db import DB, audit
 from app.errors import ApiError, forbidden
 
 COOKIE = "localcbt_session"
@@ -232,20 +232,27 @@ def login(body: LoginRequest, request: Request, response: Response, db: DB) -> d
         {"id": user_id},
     )
     if "STUDENT" in roles and not permitted:
-        active = db.execute(
+        # BR-21: selama attempt berjalan, sesi lama yang belum habis selalu memblokir; hanya
+        # izin pengawas (atau reset sandi admin) yang membukanya. Di luar ujian, sesi yang diam
+        # > stale dianggap ditinggal dan boleh diambil alih (diaudit).
+        live = db.execute(
             text("""
-            select 1 from sessions
-            where user_id = :id and expires_at > now()
-              and last_seen_at > now() - make_interval(secs => :stale)
+            select last_seen_at > now() - make_interval(secs => :stale) as fresh,
+                   exists (select 1 from exam_attempts where student_id = :id
+                           and state in ('IN_PROGRESS', 'PAUSED')) as in_exam
+            from sessions where user_id = :id and expires_at > now()
+            order by last_seen_at desc limit 1
             """),
             {"id": user_id, "stale": settings.student_session_stale_seconds},
         ).first()
-        if active:
+        if live and (live.fresh or live.in_exam):
             raise ApiError(
                 409,
                 "SESSION_ACTIVE",
                 "Akun masih aktif pada perangkat lain. Hubungi pengawas untuk pindah perangkat.",
             )
+        if live:
+            audit(db, user_id, "STALE_SESSION_TAKEOVER", "user", user_id)
     # Staf: login terbaru menang. Siswa: yang terhapus di sini hanya sesi basi.
     db.execute(text("delete from sessions where user_id = :id"), {"id": user_id})
 

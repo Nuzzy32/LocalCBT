@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["http://localhost:5173", "https://localhost:8443"]
     cookie_secure: bool = True
     session_ttl_seconds: int = 12 * 3600
-    # Siswa: login kedua ditolak selama sesi lama masih aktif dalam jendela ini.
+    # Siswa di luar ujian: login kedua ditolak selama sesi lama aktif dalam jendela ini. Saat
+    # attempt berjalan tidak ada jendela: pindah perangkat wajib lewat pengawas (BR-21).
     student_session_stale_seconds: int = 600
     # Gambar soal; nama berkas = sha256 isinya. Ikut dibackup bersama DB (M8).
     media_dir: Path = Path("data/media")
