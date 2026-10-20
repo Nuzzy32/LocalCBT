@@ -1,0 +1,21 @@
+<!-- WinSW: API sebagai Windows Service (FR-ADM-02). Salin WinSW-x64.exe ke folder ini sebagai
+     localcbt-api.exe, lalu scripts/install-windows.ps1 menjalankan `localcbt-api.exe install`.
+     %BASE% = folder berkas ini. Konfigurasi di services\api\.env. -->
+<service>
+  <id>LocalCBT-API</id>
+  <name>LocalCBT API</name>
+  <description>LocalCBT: server ujian lokal (FastAPI).</description>
+  <workingdirectory>%BASE%\..\..\services\api</workingdirectory>
+  <executable>%BASE%\..\..\services\api\.venv\Scripts\uvicorn.exe</executable>
+  <arguments>app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log</arguments>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <depend>postgresql-x64-16</depend>
+  <onfailure action="restart" delay="5 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>C:\LocalCBT\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+</service>

@@ -1039,56 +1039,139 @@ paths:
   /ops/preflight:
     post:
       tags: [Operations]
-      summary: Jalankan preflight server; probe VLAN siswa harus terpisah
-      operationId: startPreflight
+      summary: Preflight server sinkron (~3 detik); hasil dicatat audit PREFLIGHT_SERVER
+      description: >
+        M8: diubah dari job 202 menjadi respons langsung. Status per cek OK/WARNING/FAILED/UNTESTED;
+        UNTESTED tidak pernah dianggap lulus. Probe VLAN siswa terpisah (/ops/probe).
+      operationId: runPreflight
       x-roles: [ADMIN]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       responses:
-        '202':
-          description: Preflight job created
+        '200':
+          description: Hasil preflight
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/JobReceipt'}
+              schema:
+                type: object
+                required: [checks, ran_at]
+                properties:
+                  checks: {type: array, items: {$ref: '#/components/schemas/PreflightCheck'}}
+                  ran_at: {type: string, format: date-time}
         '403': {$ref: '#/components/responses/Forbidden'}
   /ops/backups:
+    get:
+      tags: [Operations]
+      summary: Riwayat backup (100 terbaru)
+      operationId: listBackups
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Daftar job backup
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/BackupJob'}}
     post:
       tags: [Operations]
-      summary: Trigger manual backup yang konsisten dan diverifikasi
+      summary: Antrekan backup manual (terenkripsi; VERIFIED hanya setelah verifikasi ulang)
       operationId: createManualBackup
       x-roles: [ADMIN]
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
       responses:
         '202':
-          description: Backup job queued
+          description: Backup job queued; dijalankan scheduler service
           content:
             application/json:
               schema: {$ref: '#/components/schemas/JobReceipt'}
+        '409':
+          description: BACKUP_BUSY, backup lain antre/berjalan
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         '403': {$ref: '#/components/responses/Forbidden'}
-  /ops/backups/{backupId}/restore:
+  /ops/settings:
+    get:
+      tags: [Operations]
+      summary: Jadwal & masa simpan backup
+      operationId: getOpsSettings
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Pengaturan
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OpsSettings'}
+    put:
+      tags: [Operations]
+      summary: Ubah jadwal & masa simpan backup (wajib alasan, diaudit OPS_SETTINGS_CHANGED)
+      operationId: putOpsSettings
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/OpsSettings'}
+                - type: object
+                  required: [reason]
+                  properties:
+                    reason: {type: string, minLength: 10, maxLength: 500}
+      responses:
+        '200':
+          description: Pengaturan tersimpan
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OpsSettings'}
+  /ops/network:
+    get:
+      tags: [Operations]
+      summary: Status bukti jaringan ujian (probe terakhir dari subnet ujian, atestasi manual)
+      operationId: networkStatus
+      x-roles: [ADMIN]
+      responses:
+        '200':
+          description: Verdict probe, URL probe, atestasi terakhir
+  /ops/probe:
+    get:
+      tags: [Operations]
+      summary: Halaman probe tanpa login, dibuka dari perangkat di SSID ujian (CSP sendiri)
+      operationId: probePage
+      security: []
+      responses:
+        '200': {description: HTML}
+  /ops/probe-reports:
     post:
       tags: [Operations]
-      summary: Minta restore backup, harus menjalankan prosedur maintenance dan konfirmasi
-      operationId: restoreBackup
-      x-roles: [ADMIN]
-      parameters: [{$ref: '#/components/parameters/BackupId'}, {$ref: '#/components/parameters/CsrfToken'}]
+      summary: Laporan probe tanpa login; tanpa PII; dibatasi per IP; IP di luar subnet ujian tidak dihitung
+      operationId: submitProbeReport
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [confirm, reason]
+              required: [control_ok, results]
               properties:
-                confirm: {type: boolean, const: true}
-                reason: {type: string, minLength: 10, maxLength: 500}
+                control_ok: {type: boolean}
+                results:
+                  type: object
+                  propertyNames:
+                    enum: [ipv4_cloudflare, ipv6_cloudflare, google, ipv6_only_dns, chatgpt]
+                  additionalProperties:
+                    type: object
+                    required: [reachable, ms]
+                    properties:
+                      reachable: {type: boolean}
+                      ms: {type: integer, minimum: 0, maximum: 60000}
       responses:
-        '202':
-          description: Restore queued only when safe maintenance mode confirmed
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/JobReceipt'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '403': {$ref: '#/components/responses/Forbidden'}
+        '201': {description: Tercatat (audit NETWORK_PROBE)}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+  # M8: POST /ops/backups/{backupId}/restore DIHAPUS. Memulihkan DB yang sedang dipakai service dari
+  # dalam service itu tidak aman. Restore = CLI `python -m app.cli restore` (wizard Control Center)
+  # ke database BARU, dicocokkan dengan manifest, lalu service dialihkan. Lihat docs/ADMIN_GUIDE.md §6.
   /admin/staff:
     post:
       tags: [Academic Admin]
@@ -1760,4 +1843,38 @@ components:
         server_status: {type: string, enum: [OK, DEGRADED, DOWN]}
         database_status: {type: string, enum: [OK, DEGRADED, DOWN]}
         disk_status: {type: string, enum: [OK, WARNING, CRITICAL]}
+        disk_free_ratio: {type: [number, 'null']}
         last_verified_backup_at: {type: [string, 'null'], format: date-time}
+        last_backup: {oneOf: [{$ref: '#/components/schemas/BackupJob'}, {type: 'null'}]}
+        active_attempts: {type: [integer, 'null']}
+        backup_passphrase_set: {type: boolean}
+        backup_same_disk_as_media: {type: boolean}
+    PreflightCheck:
+      type: object
+      required: [id, status, detail]
+      properties:
+        id: {type: string, examples: [database, disk, backup, backup_disk, pg_tools, dns, https, clock, wan_blocked]}
+        status: {type: string, enum: [OK, WARNING, FAILED, UNTESTED]}
+        detail: {type: string}
+    BackupJob:
+      type: object
+      required: [id, trigger, status, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        trigger: {type: string, enum: [DAILY, MANUAL, PRE_UPGRADE]}
+        status: {type: string, enum: [QUEUED, RUNNING, VERIFIED, FAILED]}
+        size_bytes: {type: [integer, 'null']}
+        alembic_rev: {type: [string, 'null']}
+        error: {type: [string, 'null']}
+        created_at: {type: string, format: date-time}
+        started_at: {type: [string, 'null'], format: date-time}
+        verified_at: {type: [string, 'null'], format: date-time}
+        restore_verified_at: {type: [string, 'null'], format: date-time}
+        pruned_at: {type: [string, 'null'], format: date-time}
+    OpsSettings:
+      type: object
+      required: [backup_hour, backup_keep_daily, backup_keep_manual_days]
+      properties:
+        backup_hour: {type: integer, minimum: 0, maximum: 23}
+        backup_keep_daily: {type: integer, minimum: 1, maximum: 365}
+        backup_keep_manual_days: {type: integer, minimum: 1, maximum: 3650}

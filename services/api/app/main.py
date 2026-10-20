@@ -19,8 +19,10 @@ from app import (
     admin,
     attempts,
     auth,
+    backup,
     exams,
     media,
+    ops,
     proctor,
     question_import,
     questions,
@@ -58,12 +60,16 @@ log = logging.getLogger("localcbt.api")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    worker = sweeper.Sweeper() if settings.sweeper_enabled else None
-    if worker:
-        worker.start()
+    workers: list[sweeper.Sweeper | backup.BackupScheduler] = []
+    if settings.sweeper_enabled:
+        workers.append(sweeper.Sweeper())
+    if settings.backup_scheduler_enabled:
+        workers.append(backup.BackupScheduler())
+    for w in workers:
+        w.start()
     yield
-    if worker:
-        worker.stop()
+    for w in workers:
+        w.stop()
 
 
 app = FastAPI(
@@ -85,6 +91,7 @@ app.include_router(exams.router)
 app.include_router(attempts.router)
 app.include_router(proctor.router)
 app.include_router(results.router)
+app.include_router(ops.router)
 
 
 def error_response(

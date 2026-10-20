@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Caddy (HTTPS portal + reverse proxy API). Dipasang oleh scripts/install-macos.sh.
+     __HOST__ = PUBLIC_HOST; sertifikat: lihat ADR-003 (tls internal hanya untuk uji). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>id.localcbt.caddy</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__CADDY__</string>
+		<string>run</string>
+		<string>--config</string>
+		<string>__ROOT__/infrastructure/proxy/Caddyfile</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>LOCALCBT_HOST</key>
+		<string>__HOST__</string>
+		<key>LOCALCBT_WEB_ROOT</key>
+		<string>__ROOT__/apps/web/dist</string>
+		<key>XDG_DATA_HOME</key>
+		<string>/Library/Application Support/LocalCBT</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Library/Logs/LocalCBT/caddy.log</string>
+</dict>
+</plist>

@@ -8,16 +8,24 @@ CBT ujian sekolah yang berjalan penuh di LAN. Spesifikasi: [`docs/`](docs/).
 | `apps/web` | React + TypeScript + Vite (satu app, route per role) |
 | `apps/control-center` | PySide6, hanya di komputer server |
 | `infrastructure/proxy` | Caddy: HTTPS same-origin web + API + WebSocket |
-| `infrastructure/macos` | Template launchd untuk API |
+| `infrastructure/macos` | launchd: API + Caddy |
+| `infrastructure/windows` | WinSW: API + Caddy |
+| `scripts` | Installer/upgrade macOS & Windows |
+
+Panduan pengguna: [admin/operator](docs/ADMIN_GUIDE.md), [guru](docs/TEACHER_QUICKSTART.md),
+[pengawas](docs/PROCTOR_SOP.md). Kebutuhan produk: [`docs/PRD.docx`](docs/PRD.docx).
 
 ## Development
 
-Butuh: Docker, [uv](https://docs.astral.sh/uv/), Node 26 + pnpm.
+Butuh: Docker, [uv](https://docs.astral.sh/uv/), Node 26 + pnpm, klien PostgreSQL 16
+(`pg_dump`/`pg_restore`, versi mayor harus sama dengan server; macOS: `brew install postgresql@16`
+lalu `LOCALCBT_PG_BIN_DIR=/opt/homebrew/opt/postgresql@16/bin`).
 
 ```bash
 docker compose -f compose.dev.yml up -d          # PostgreSQL dev
 cd services/api && uv sync && uv run alembic upgrade head
 uv run python -m app.cli create-admin admin --name "Admin Sekolah"   # admin pertama
+echo 'LOCALCBT_BACKUP_PASSPHRASE=dev-only-passphrase' >> .env  # backup ditolak tanpa ini
 uv run uvicorn app.main:app --reload             # http://127.0.0.1:8000/api/v1/docs
 cd apps/web && pnpm install && pnpm dev          # http://localhost:5173 (proxy /api)
 cd apps/control-center && uv sync && uv run python control_center.py

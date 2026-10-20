@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- M1-04 spike: API sebagai launchd daemon, hidup terlepas dari Control Center.
-     Template: ganti __API_DIR__ lalu salin ke /Library/LaunchDaemons/ (perlu admin).
-     Installer sungguhan (runtime Python terisolasi, signing/notarization) = M8. -->
+<!-- API sebagai launchd daemon, hidup terlepas dari Control Center (FR-ADM-02, T-018).
+     Dipasang oleh scripts/install-macos.sh (mengganti __API_DIR__). Konfigurasi di __API_DIR__/.env. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -17,12 +16,18 @@
 		<string>127.0.0.1</string>
 		<string>--port</string>
 		<string>8000</string>
+		<!-- IP asli perangkat dari Caddy (probe jaringan, rate limit). -->
+		<string>--proxy-headers</string>
+		<string>--forwarded-allow-ips</string>
+		<string>127.0.0.1</string>
 		<string>--no-access-log</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>StandardOutPath</key>
+	<string>/Library/Logs/LocalCBT/api.log</string>
 	<key>StandardErrorPath</key>
 	<string>/Library/Logs/LocalCBT/api.log</string>
 </dict>

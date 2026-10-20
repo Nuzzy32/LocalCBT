@@ -13,6 +13,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     "defusedxml>=0.7.1",
     "python-multipart>=0.0.32",
+    "cryptography>=46",
 ]
 
 [dependency-groups]

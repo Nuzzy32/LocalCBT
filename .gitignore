@@ -22,3 +22,7 @@ dist/
 .DS_Store
 *.tsbuildinfo
 .dev-credentials
+
+# Biner Windows (WinSW/caddy) & konfigurasi hasil installer
+infrastructure/windows/*.exe
+infrastructure/windows/*.generated.xml

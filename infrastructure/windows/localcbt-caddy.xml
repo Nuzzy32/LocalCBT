@@ -1,0 +1,16 @@
+<!-- WinSW: Caddy (HTTPS portal). Salin WinSW-x64.exe sebagai localcbt-caddy.exe dan caddy.exe ke
+     folder ini. LOCALCBT_HOST diisi install-windows.ps1. Sertifikat: ADR-003. -->
+<service>
+  <id>LocalCBT-Caddy</id>
+  <name>LocalCBT Caddy</name>
+  <description>LocalCBT: HTTPS portal dan reverse proxy.</description>
+  <executable>%BASE%\caddy.exe</executable>
+  <arguments>run --config "%BASE%\..\proxy\Caddyfile"</arguments>
+  <env name="LOCALCBT_HOST" value="__HOST__"/>
+  <env name="LOCALCBT_WEB_ROOT" value="%BASE%\..\..\apps\web\dist"/>
+  <env name="XDG_DATA_HOME" value="C:\LocalCBT\caddy"/>
+  <startmode>Automatic</startmode>
+  <depend>LocalCBT-API</depend>
+  <onfailure action="restart" delay="5 sec"/>
+  <logpath>C:\LocalCBT\logs</logpath>
+</service>

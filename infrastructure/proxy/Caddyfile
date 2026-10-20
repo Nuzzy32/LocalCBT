@@ -24,7 +24,8 @@
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 		X-Frame-Options DENY
-		# Semua aset lokal: tidak ada CDN/Google Fonts.
-		Content-Security-Policy "default-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+		# Semua aset lokal: tidak ada CDN/Google Fonts. `?` = default; halaman probe jaringan
+		# (/api/v1/ops/probe) mengirim CSP sendiri yang mengizinkan percobaan koneksi ke internet.
+		?Content-Security-Policy "default-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
 	}
 }

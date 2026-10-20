@@ -23,11 +23,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
+      # Tes backup/restore memakai pg_dump/pg_restore sungguhan; versi mayor = server (16).
+      - run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-16
       - run: uv sync --locked
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy
       - run: uv run pytest -q
+        env:
+          LOCALCBT_PG_BIN_DIR: /usr/lib/postgresql/16/bin
       # Migrasi harus idempotent (M1 DoD)
       - run: uv run alembic upgrade head && uv run alembic upgrade head
       - run: uv run --with pip-audit pip-audit
