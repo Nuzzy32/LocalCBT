@@ -45,10 +45,17 @@ echo "› Migrasi database"
 
 HOST=$(sed -n 's/^LOCALCBT_PUBLIC_HOST=//p' "$API/.env" | tr -d "'\"")
 [ -n "$HOST" ] || { echo "LOCALCBT_PUBLIC_HOST belum diisi di .env." >&2; exit 1; }
+# Divalidasi: nilai ini masuk ke plist yang dipasang root (cegah injeksi XML/argumen).
+printf '%s' "$HOST" | grep -Eq '^[A-Za-z0-9.-]{1,253}$' || {
+  echo "LOCALCBT_PUBLIC_HOST tidak valid: $HOST" >&2; exit 1; }
 
-mkdir -p "$LOGS"
-sed "s#__API_DIR__#$API#g" "$ROOT/infrastructure/macos/id.localcbt.api.plist" > "$DAEMONS/id.localcbt.api.plist"
-sed -e "s#__ROOT__#$ROOT#g" -e "s#__CADDY__#$CADDY#g" -e "s#__HOST__#$HOST#g" \
+DATA="/Library/Application Support/LocalCBT"
+mkdir -p "$LOGS" "$DATA"
+chown "$OWNER" "$LOGS" "$DATA"
+chmod 750 "$LOGS" "$DATA"   # log & CA lokal Caddy tidak terbaca user lain
+sed -e "s#__API_DIR__#$API#g" -e "s#__USER__#$OWNER#g" \
+  "$ROOT/infrastructure/macos/id.localcbt.api.plist" > "$DAEMONS/id.localcbt.api.plist"
+sed -e "s#__ROOT__#$ROOT#g" -e "s#__CADDY__#$CADDY#g" -e "s#__HOST__#$HOST#g" -e "s#__USER__#$OWNER#g" \
   "$ROOT/infrastructure/macos/id.localcbt.caddy.plist" > "$DAEMONS/id.localcbt.caddy.plist"
 chmod 644 "$DAEMONS"/id.localcbt.*.plist
 chown root:wheel "$DAEMONS"/id.localcbt.*.plist

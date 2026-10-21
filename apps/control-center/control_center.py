@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from PySide6.QtCore import QProcess, QTimer, QUrl
+from PySide6.QtCore import QProcess, Qt, QTimer, QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -99,9 +99,10 @@ def api_python(api_dir: Path, platform: str = sys.platform) -> Path:
 
 
 _SECRET_FIELD = re.compile(
-    r'(?i)("?(?:password|passphrase|token|csrf[_-]?token|cookie|authorization|secret)"?\s*[:=]\s*)'
-    r'("[^"]*"|\S+)'
+    r"""(?i)(["']?(?:password|passphrase|token|csrf[_-]?token|cookie|secret|password_hash)"""
+    r"""["']?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)"""
 )
+_AUTH = re.compile(r"(?i)\b(bearer|basic)\s+\S+")
 _LONG_TOKEN = re.compile(r"[A-Za-z0-9_\-+/=]{32,}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
@@ -113,6 +114,7 @@ def redact(line: str) -> str:
     """Samarkan rahasia & data siswa sebelum log ditampilkan/diekspor untuk dukungan teknis."""
     line = _DB_PASSWORD.sub(r"\1***@", line)
     line = _SECRET_FIELD.sub(r'\1"***"', line)
+    line = _AUTH.sub(r"\1 ***", line)
     line = _LONG_TOKEN.sub(lambda m: m[0] if _UUID.fullmatch(m[0]) else "[REDACTED]", line)
     line = _EMAIL.sub("[email]", line)
     return _NISN.sub("[nisn]", line)
@@ -182,11 +184,18 @@ def backup_label(status: dict[str, Any]) -> str:
 
 
 def env_quote(value: str) -> str:
-    if re.fullmatch(r"[A-Za-z0-9_./:@%+,=\[\]\"-]*", value):
+    """Nilai .env yang dibaca kembali PERSIS sama oleh python-dotenv (M9-02): tanpa kutip bila
+    aman, kutip tunggal (literal, tanpa interpolasi ${...}) bila tidak. Nilai yang memuat kutip
+    tunggal, '$', atau baris baru ditolak karena dotenv akan mengubahnya diam-diam."""
+    if re.fullmatch(r"[A-Za-z0-9_./:@%+,=\[\]-]*", value):
         return value
-    if "'" not in value:
-        return f"'{value}'"
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # python-dotenv mengekspansi ${VAR} bahkan di dalam kutip: '$' juga ditolak.
+    if any(c in value for c in "'$\n\r"):
+        raise ValueError("Nilai tidak boleh memuat tanda ' atau $ atau baris baru.")
+    return f"'{value}'"
+
+
+HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
 
 
 def merge_env(existing: str, updates: dict[str, str]) -> str:
@@ -397,10 +406,8 @@ class Window(QMainWindow):
         probe = net.get("probe") or {}
         self.set_label("network", f"● {probe.get('status', '?')}: {probe.get('detail', '')}")
         self.set_label("rev", str(data.get("alembic_rev", "-")))
-        url = net.get("probe_url") or "PUBLIC_HOST belum diatur"
         self.probe_label.setText(
-            f"Probe dari perangkat siswa: {probe.get('status', '?')} — {probe.get('detail', '')}\n"
-            f"Buka di HP/laptop siswa (SSID ujian): {url}"
+            f"Probe dari perangkat siswa: {probe.get('status', '?')} — {probe.get('detail', '')}"
         )
         s = data.get("settings") or {}
         hour, daily = s.get("backup_hour", "?"), s.get("backup_keep_daily", "?")
@@ -418,7 +425,10 @@ class Window(QMainWindow):
         run.clicked.connect(self.run_preflight)
         attest = QPushButton("Catat pemeriksaan manual…")
         attest.clicked.connect(self.attest)
+        link = QPushButton("Buat link probe")
+        link.clicked.connect(self.probe_link)
         row.addWidget(run)
+        row.addWidget(link)
         row.addWidget(attest)
         row.addStretch()
         lay.addLayout(row)
@@ -447,6 +457,22 @@ class Window(QMainWindow):
             self.note("Preflight selesai dan dicatat.")
 
         self.cli.run(["preflight"], done)
+
+    def probe_link(self) -> None:
+        def done(data: Any, err: str | None) -> None:
+            if err:
+                return self.error("Gagal", err)
+            url = data.get("url") or f"https://<alamat portal>{data['path']}"
+            box = QMessageBox(self)
+            box.setWindowTitle("Link probe jaringan ujian")
+            box.setText(
+                f"Buka link ini di HP/laptop yang tersambung ke SSID ujian (berlaku "
+                f"{data['valid_hours']} jam). Jangan bagikan ke siswa.\n\n{url}"
+            )
+            box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            box.exec()
+
+        self.cli.run(["probe-link"], done)
 
     def attest(self) -> None:
         def got_items(items: Any, err: str | None) -> None:
@@ -868,6 +894,9 @@ class ConfigPage(QWizardPage):
             return False
         subnets = [s.strip() for s in self.subnets.text().split(",") if s.strip()]
         host = self.host.text().strip()
+        if host and not HOST_RE.fullmatch(host):
+            self.msg.setText("Alamat portal hanya boleh huruf, angka, titik, dan tanda hubung.")
+            return False
         updates = {
             "LOCALCBT_DATABASE_URL": self.db.text().strip(),
             "LOCALCBT_BACKUP_PASSPHRASE": self.pw1.text(),
@@ -881,8 +910,13 @@ class ConfigPage(QWizardPage):
         env = API_DIR / ".env"
         try:
             existing = env.read_text() if env.exists() else ""
-            env.write_text(merge_env(existing, updates))
+            content = merge_env(existing, updates)
+            with os.fdopen(os.open(env, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+                f.write(content)
             env.chmod(0o600)
+        except ValueError as e:
+            self.msg.setText(str(e))
+            return False
         except OSError as e:
             self.msg.setText(f"Tidak bisa menulis {env}: {e}")
             return False

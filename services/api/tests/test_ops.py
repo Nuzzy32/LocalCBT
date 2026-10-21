@@ -305,16 +305,38 @@ def _probe_client(ip: str) -> TestClient:
 ALL_BLOCKED = {t: {"reachable": False, "ms": 4000} for t in ops.PROBE_TARGETS}
 
 
+def _link() -> str:
+    with engine.begin() as db:
+        return str(ops.create_probe_link(db, None)["path"]).split("k=")[1]
+
+
+def _report(ip: str, k: str, control_ok: bool = True, results: Any = None) -> Any:
+    body = {"control_ok": control_ok, "results": results or ALL_BLOCKED, "k": k}
+    return _probe_client(ip).post("/api/v1/ops/probe-reports", json=body)
+
+
 def test_probe_page_has_own_csp_and_no_auth() -> None:
     r = _probe_client("10.20.0.5").get("/api/v1/ops/probe")
     assert (
         r.status_code == 200 and "connect-src 'self' https:" in r.headers["content-security-policy"]
     )
     js = _probe_client("10.20.0.5").get("/api/v1/ops/probe.js")
-    assert "1.1.1.1" in js.text and "probe-reports" in js.text
+    assert "1.1.1.1" in js.text and "probe-reports" in js.text and 'get("k")' in js.text
 
 
-def test_probe_verdict_only_green_from_exam_subnet(
+def test_probe_report_requires_valid_link_and_all_targets(backups: Path) -> None:
+    k = _link()
+    partial = {"chatgpt": {"reachable": False, "ms": 5}}
+    assert _report("10.20.0.5", k, results=partial).status_code == 422  # laporan parsial ditolak
+    assert _report("10.20.0.5", "kunci-palsu-12345").status_code == 403
+    assert _report("10.20.0.5", k).status_code == 201
+    with engine.begin() as db:  # link > 24 jam kedaluwarsa
+        db.execute(text("update audit_events set created_at = now() - interval '25 hours' "
+                        "where action = 'NETWORK_PROBE_LINK'"))  # fmt: skip
+    assert _report("10.20.0.6", k).status_code == 403
+
+
+def test_probe_verdict_worst_of_round_only_from_exam_subnet(
     backups: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "exam_subnets", ["10.20.0.0/22"])
@@ -324,44 +346,44 @@ def test_probe_verdict_only_green_from_exam_subnet(
     def verdict() -> dict[str, str]:
         return admin.get("/api/v1/ops/network").json()["probe"]
 
-    bad = {"control_ok": True, "results": {"nope": {"reachable": False, "ms": 1}}}
-    assert _probe_client("10.20.0.5").post("/api/v1/ops/probe-reports", json=bad).status_code == 422
+    r = admin.post("/api/v1/ops/probe-links")
+    assert r.status_code == 201
+    k = r.json()["path"].split("k=")[1]
     # Dari jaringan staf: tidak dihitung.
-    r = _probe_client("192.168.1.9").post(
-        "/api/v1/ops/probe-reports", json={"control_ok": True, "results": ALL_BLOCKED}
-    )
-    assert r.status_code == 201 and r.json()["in_exam_subnet"] is False
+    assert _report("192.168.1.9", k).json()["in_exam_subnet"] is False
     assert verdict()["status"] == "UNTESTED"
-    # Kontrol lokal gagal: laporan tidak sah.
-    _probe_client("10.20.0.6").post(
-        "/api/v1/ops/probe-reports", json={"control_ok": False, "results": ALL_BLOCKED}
-    )
-    assert verdict()["status"] == "FAILED"
-    _probe_client("10.20.0.7").post(
-        "/api/v1/ops/probe-reports", json={"control_ok": True, "results": ALL_BLOCKED}
-    )
+    assert _report("10.20.0.7", k).status_code == 201
     assert verdict()["status"] == "OK"
     leaky = {**ALL_BLOCKED, "ipv6_cloudflare": {"reachable": True, "ms": 30}}
-    _probe_client("10.20.1.8").post(
-        "/api/v1/ops/probe-reports", json={"control_ok": True, "results": leaky}
-    )
+    _report("10.20.1.8", k, results=leaky)
+    # Laporan palsu "semua terblokir" sesudahnya TIDAK menutupi laporan asli yang bocor.
+    _report("10.20.0.9", k)
     v = verdict()
     assert v["status"] == "FAILED" and "ipv6_cloudflare" in v["detail"]
+    # Putaran baru (router diperbaiki): hanya laporan link baru yang dinilai.
+    k2 = _link()
+    _report("10.20.0.10", k2, control_ok=False)
+    assert verdict()["status"] == "FAILED"
+    _report("10.20.0.11", k2)
+    assert verdict()["status"] == "FAILED"  # kontrol lokal pernah gagal di putaran ini
+    k3 = _link()
+    _report("10.20.0.12", k3)
+    assert verdict()["status"] == "OK"
 
 
 def test_probe_verdict_expires_and_rate_limit(
     backups: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "exam_subnets", ["10.20.0.0/22"])
-    meta = {"ip": "10.20.0.1", "control_ok": True, "results": {}}
+    meta = {"ip": "10.20.0.1", "control_ok": True, "results": ALL_BLOCKED}
     now = datetime.now().astimezone()
-    old = {"metadata": meta, "created_at": now - timedelta(days=8)}
+    old = [{"metadata": meta, "created_at": now - timedelta(days=8)}]
     assert ops.network_verdict(old, now)["status"] == "UNTESTED"
     monkeypatch.setattr(settings, "exam_subnets", [])
-    assert ops.network_verdict({"metadata": meta, "created_at": now}, now)["status"] == "UNTESTED"
-    c = _probe_client("10.20.0.9")
-    body = {"control_ok": True, "results": ALL_BLOCKED}
-    codes = [c.post("/api/v1/ops/probe-reports", json=body).status_code for _ in range(11)]
+    fresh = [{"metadata": meta, "created_at": now}]
+    assert ops.network_verdict(fresh, now)["status"] == "UNTESTED"
+    k = _link()
+    codes = [_report("10.20.0.9", k).status_code for _ in range(11)]
     assert codes[:10] == [201] * 10 and codes[10] == 429
 
 

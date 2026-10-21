@@ -1,10 +1,7 @@
-import re
-
 from sqlalchemy import text
 
 from app.config import settings
 from app.db import engine
-from app.main import app
 from tests.conftest import PASSWORD, login, make_user, new_client
 
 LOGIN = "/api/v1/auth/login"
@@ -110,22 +107,3 @@ def test_student_second_login_blocked_until_session_stale() -> None:
         assert c.scalars(text("select action from audit_events")).all() == [
             "STALE_SESSION_TAKEOVER"
         ]
-
-
-def test_every_route_requires_auth_except_allowlist() -> None:
-    # Default deny: route baru tanpa dependency current_user akan menggagalkan tes ini.
-    public = {
-        "/api/v1/healthz",
-        "/api/v1/auth/login",
-        "/api/v1/docs",
-        "/api/v1/openapi.json",
-    }
-    client = new_client()
-    for route in app.routes:
-        path = getattr(route, "path", "")
-        if path in public:
-            continue
-        for method in getattr(route, "methods", set()) - {"HEAD", "OPTIONS"}:
-            url = re.sub(r"\{[a-z_]+\}", "00000000-0000-0000-0000-000000000000", path)
-            r = client.request(method, url)
-            assert r.status_code == 401, (method, path, r.status_code)

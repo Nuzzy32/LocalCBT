@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -23,6 +24,24 @@ def test_describe() -> None:
     # Body aneh tidak boleh jadi hijau
     assert describe(200, b"not json")[1] == "● DOWN"
     assert describe(500, b"")[0] == "● ERROR (HTTP 500)"
+
+
+def test_redact_python_repr_and_auth_header() -> None:
+    out = redact("{'password': 'rahasia-siswa', 'n': 1} Authorization: Bearer abc.def")
+    assert "rahasia-siswa" not in out and "abc.def" not in out
+
+
+def test_env_values_roundtrip_through_dotenv(tmp_path: Path) -> None:
+    from dotenv import dotenv_values
+
+    values = {
+        "A": 'pass phrase #1 {HOME} "q" \\x',
+        "B": '["10.20.0.0/22"]',
+        "C": "postgresql+psycopg://u:p@h:5432/db",
+    }
+    env = tmp_path / ".env"
+    env.write_text(merge_env("", values))
+    assert dotenv_values(env) == values
 
 
 def test_redact_hides_secrets_and_student_data() -> None:
@@ -79,8 +98,13 @@ def test_merge_env_and_quoting() -> None:
         "A=1\nLOCALCBT_BACKUP_PASSPHRASE=lama\n", {"LOCALCBT_BACKUP_PASSPHRASE": "a b#c"}
     )
     assert merged == "A=1\nLOCALCBT_BACKUP_PASSPHRASE='a b#c'\n"
-    assert env_quote('["10.0.0.0/8"]') == '["10.0.0.0/8"]'
-    assert env_quote("it's") == '"it\'s"'
+    assert env_quote('["10.0.0.0/8"]') == "'[\"10.0.0.0/8\"]'"
+    for bad in ("it's", "a\nLOCALCBT_X=1", "p${HOME}x"):
+        try:
+            env_quote(bad)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
     assert fmt_bytes(1536) == "1.5 KB" and fmt_bytes(None) == "-"
 
 

@@ -26,7 +26,7 @@ docker compose -f compose.dev.yml up -d          # PostgreSQL dev
 cd services/api && uv sync && uv run alembic upgrade head
 uv run python -m app.cli create-admin admin --name "Admin Sekolah"   # admin pertama
 echo 'LOCALCBT_BACKUP_PASSPHRASE=dev-only-passphrase' >> .env  # backup ditolak tanpa ini
-uv run uvicorn app.main:app --reload             # http://127.0.0.1:8000/api/v1/docs
+LOCALCBT_API_DOCS=true uv run uvicorn app.main:app --reload   # http://127.0.0.1:8000/api/v1/docs
 cd apps/web && pnpm install && pnpm dev          # http://localhost:5173 (proxy /api)
 cd apps/control-center && uv sync && uv run python control_center.py
 ```

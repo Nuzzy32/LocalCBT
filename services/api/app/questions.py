@@ -11,7 +11,7 @@ from sqlalchemy import Connection, RowMapping, text
 from app.auth import CurrentUser, require_roles
 from app.db import DB, audit
 from app.errors import ApiError, forbidden, not_found
-from app.media import media_readable, media_url
+from app.media import media_attachable, media_url
 
 router = APIRouter(prefix="/api/v1", tags=["Question Bank"])
 Teacher = Annotated[CurrentUser, Depends(require_roles("TEACHER"))]
@@ -159,7 +159,7 @@ def check_refs(db: Connection, user: CurrentUser, bank_id: UUID, q: QuestionIn) 
         {"s": q.stimulus_id, "b": bank_id},
     ):
         raise ApiError(422, "INVALID_REFERENCE", "Stimulus tidak ada di bank soal ini.")
-    if q.media_asset_id and not media_readable(db, user.id, q.media_asset_id):
+    if q.media_asset_id and not media_attachable(db, user.id, q.media_asset_id):
         raise ApiError(422, "INVALID_REFERENCE", "Gambar tidak ditemukan.")
 
 
@@ -388,7 +388,7 @@ def list_stimuli(bank_id: UUID, user: Teacher, db: DB) -> list[dict[str, Any]]:
 @router.post("/question-banks/{bank_id}/stimuli", status_code=201)
 def create_stimulus(bank_id: UUID, body: StimulusIn, user: Teacher, db: DB) -> dict[str, Any]:
     get_bank(db, user, bank_id, "EDIT")
-    if body.media_asset_id and not media_readable(db, user.id, body.media_asset_id):
+    if body.media_asset_id and not media_attachable(db, user.id, body.media_asset_id):
         raise ApiError(422, "INVALID_REFERENCE", "Gambar tidak ditemukan.")
     stimulus_id = db.scalar(
         text("""

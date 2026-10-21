@@ -84,8 +84,8 @@ app = FastAPI(
     lifespan=lifespan,
     title="LocalCBT API",
     version="0.1.0",
-    docs_url="/api/v1/docs",
-    openapi_url="/api/v1/openapi.json",
+    docs_url="/api/v1/docs" if settings.api_docs else None,
+    openapi_url="/api/v1/openapi.json" if settings.api_docs else None,
     swagger_ui_oauth2_redirect_url=None,
     redoc_url=None,
 )

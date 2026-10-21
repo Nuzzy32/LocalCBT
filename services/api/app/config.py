@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     # Default = Postgres dev dari compose.dev.yml. Produksi wajib di-set lewat env/secret store.
     database_url: str = "postgresql+psycopg://localcbt:localcbt-dev@127.0.0.1:5432/localcbt"
     log_level: str = "INFO"
+    # Swagger/OpenAPI hanya untuk development: di produksi tidak perlu dibuka ke jaringan siswa.
+    api_docs: bool = False
     # Origin yang boleh melakukan mutasi (CSRF/Origin check). Produksi: https://<host CBT>.
     allowed_origins: list[str] = ["http://localhost:5173", "https://localhost:8443"]
     cookie_secure: bool = True
@@ -16,6 +18,8 @@ class Settings(BaseSettings):
     # Siswa di luar ujian: login kedua ditolak selama sesi lama aktif dalam jendela ini. Saat
     # attempt berjalan tidak ada jendela: pindah perangkat wajib lewat pengawas (BR-21).
     student_session_stale_seconds: int = 600
+    # Sesi siswa berakhir setelah diam selama ini (komputer lab dipakai bergantian).
+    student_session_idle_seconds: int = 1800
     # Gambar soal; nama berkas = sha256 isinya. Ikut dibackup bersama DB (M8).
     media_dir: Path = Path("data/media")
     # Sweep periodik (jeda otomatis, auto-submit). Dimatikan di tes; tes memanggil sweep_once().

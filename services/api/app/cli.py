@@ -138,13 +138,8 @@ def run_backup(trigger: str = "MANUAL") -> dict[str, Any]:
     with backup.ops_lock() as got:
         if not got:
             raise CliError("Backup/restore lain sedang berjalan. Coba lagi beberapa menit lagi.")
+        backup._fail_stale()  # job RUNNING & folder kerja sisa proses yang mati
         with engine.begin() as db:
-            db.execute(
-                text("""
-                update backup_jobs set status = 'FAILED', error = 'Terhenti sebelum selesai.'
-                where status = 'RUNNING'
-                """)
-            )
             job_id = db.scalar(text("select id from backup_jobs where status = 'QUEUED'"))
             if job_id is None or trigger != "MANUAL":
                 if job_id is not None:
@@ -201,9 +196,15 @@ def _set_env(path: Path, key: str, value: str) -> None:
     lines = [ln for ln in lines if not ln.startswith(f"{key}=")] + [f"{key}={value}"]
     if path.exists():
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path.with_name(f"{path.name}.bak-{stamp}").write_text(path.read_text())
-    path.write_text("\n".join(lines) + "\n")
-    path.chmod(0o600)
+        bak = path.with_name(f"{path.name}.bak-{stamp}")
+        # Berisi kata sandi DB & kunci backup: 0600 sejak dibuat, bukan umask (M9-02).
+        with os.fdopen(os.open(bak, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+            f.write(path.read_text())
+    tmp = path.with_name(f".{path.name}.new")
+    tmp.unlink(missing_ok=True)
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, path)
 
 
 def restore(
@@ -311,7 +312,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--name", required=True)
     p.add_argument("--force", action="store_true")
     p.add_argument("--password-stdin", action="store_true")
-    for name in ("status", "backups", "backup", "preflight", "upgrade", "attest-items"):
+    for name in (
+        "status",
+        "backups",
+        "backup",
+        "preflight",
+        "upgrade",
+        "attest-items",
+        "probe-link",
+    ):
         sub.add_parser(name)
     p = sub.add_parser("rehearse")
     p.add_argument("job_id", nargs="?")
@@ -366,6 +375,9 @@ def main(argv: list[str] | None = None) -> int:
             data = set_retention(args.hour, args.keep_daily, args.keep_manual_days, args.reason)
         elif args.cmd == "service-action":
             data = service_action(args.action, args.reason)
+        elif args.cmd == "probe-link":
+            with engine.begin() as db:
+                data = ops.create_probe_link(db, None)
         elif args.cmd == "attest-items":
             data = ATTEST_ITEMS
         elif args.cmd == "attest-network":

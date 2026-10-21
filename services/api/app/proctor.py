@@ -323,6 +323,13 @@ class ExtensionIn(ReasonIn):
 def extend_time(attempt_id: UUID, body: ExtensionIn, user: Supervisor, db: DB) -> dict[str, Any]:
     # Batas waktu yang sudah lewat dikumpulkan dulu (transaksi sendiri agar tetap tersimpan meski
     # permintaan ini berakhir 409): tambahan waktu tidak boleh "menghidupkan" attempt yang selesai.
+    # Hak pengawas dicek dulu (tanpa kunci baris, M9-02): pengguna lain tidak boleh memicu
+    # auto-submit attempt ujian yang tidak ia awasi.
+    exam_id = db.scalar(
+        text("select exam_id from exam_attempts where id = :id"), {"id": attempt_id}
+    )
+    if exam_id is None or not supervises(db, user, exam_id):
+        supervised_attempt(db, user, attempt_id, "EXTEND_TIME")  # 404 + audit penolakan
     with engine.begin() as own:
         expire_due(own, attempt_id=attempt_id)
     supervised_attempt(db, user, attempt_id, "EXTEND_TIME")

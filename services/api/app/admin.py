@@ -29,6 +29,7 @@ NIS_RE = re.compile(r"^[0-9A-Za-z.-]{1,32}$")
 MAX_UPLOAD = 2 * 1024 * 1024
 MAX_UNZIPPED = 20 * 1024 * 1024
 MAX_ROWS = 2000
+MAX_SHEET_ROWS = 10_000
 
 
 def _hash_many(passwords: list[str]) -> list[str]:
@@ -273,7 +274,7 @@ def _parse_student_xlsx(data: bytes) -> list[tuple[int, str, str, str]]:
     check_zip(data)
     try:
         wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
-        rows = wb.worksheets[0].iter_rows(values_only=True)
+        rows = wb.worksheets[0].iter_rows(max_col=3, values_only=True)
         header = [cell_text(c).lower() for c in next(rows, ())[:3]]
         if header != ["nis", "nama", "kelas"]:
             raise ApiError(
@@ -281,6 +282,12 @@ def _parse_student_xlsx(data: bytes) -> list[tuple[int, str, str, str]]:
             )
         out: list[tuple[int, str, str, str]] = []
         for number, row in enumerate(rows, start=2):
+            if number > MAX_SHEET_ROWS:  # baris fisik, sebelum baris kosong dilewati (M9-02)
+                raise ApiError(
+                    413,
+                    "TOO_MANY_ROWS",
+                    "Lembar kerja terlalu panjang. Hapus baris kosong di bawah data.",
+                )
             nis, name, kelas = ([cell_text(c) for c in row[:3]] + ["", "", ""])[:3]
             if not (nis or name or kelas):
                 continue

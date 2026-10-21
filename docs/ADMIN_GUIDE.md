@@ -90,11 +90,14 @@ Nama portal (mis. `cbt.sekolah.sch.id`) harus di-resolve DNS lokal ke IP server 
 
 1. Tab **Jaringan** → **Jalankan preflight**. Setiap baris berstatus **OK**, **WARNING**,
    **FAILED**, atau **UNTESTED**. UNTESTED berarti belum dibuktikan, bukan lulus.
-2. Dari HP/laptop siswa yang tersambung ke **SSID ujian**, buka alamat probe yang tertera
-   (`https://<portal>/api/v1/ops/probe`). Halaman mencoba menghubungi beberapa alamat internet
-   dan melaporkan hasilnya ke server. Tidak ada data pribadi yang dikirim.
-3. Baris **wan_blocked** menjadi **OK** hanya bila laporan datang dari subnet ujian, portal lokal
-   terjangkau, **semua** alamat internet terblokir, dan umurnya kurang dari 7 hari.
+2. Tekan **Buat link probe**, lalu buka link itu dari HP/laptop yang tersambung ke **SSID ujian**
+   (link berlaku 24 jam; jangan dibagikan ke siswa). Halaman mencoba menghubungi beberapa alamat
+   internet dan melaporkan hasilnya ke server. Tidak ada data pribadi yang dikirim. Ulangi dari
+   beberapa perangkat (Android, iPhone, laptop) dengan link yang sama.
+3. Baris **wan_blocked** menjadi **OK** hanya bila ada laporan dari subnet ujian kurang dari 7 hari
+   dan **semua** laporan untuk link terbaru menunjukkan portal lokal terjangkau dan semua alamat
+   internet terblokir. Satu perangkat yang masih bisa ke internet membuatnya **FAILED**. Setelah
+   router diperbaiki, buat link baru dan uji ulang.
 4. Probe hanya membuktikan HTTPS ke internet tertutup dari browser. Periksa sisanya secara manual
    dari perangkat siswa (IPv6, DNS publik, akses ke jaringan staf, halaman admin router), lalu
    tekan **Catat pemeriksaan manual…**, centang yang benar-benar sudah diuji, dan isi nama pemeriksa.
@@ -274,8 +277,10 @@ Membuktikan server dan Wi-Fi sekolah sanggup melayani ujian serentak. Lakukan di
    uv run --with httpx python loadtest.py seed --confirm-db localcbt_load --base-url https://<portal>
    ```
    Data akun uji tersimpan di `.loadtest.json` (rahasia, jangan dibagikan).
-3. **Jalankan** dari **laptop lain yang tersambung ke SSID ujian** (salin folder `services/api`
-   beserta `.loadtest.json`, perlu `uv`; `--with httpx` karena instalasi server tanpa paket dev):
+3. **Jalankan** dari **laptop lain yang tersambung ke SSID ujian**. Salin **hanya**
+   `loadtest.py`, `pyproject.toml`, `uv.lock`, dan `.loadtest.json`, **jangan** `.env` atau
+   `.env.bak-*` (berisi kata sandi DB & kunci backup). Perlu `uv`; `--with httpx` karena
+   instalasi server tanpa paket dev:
    ```bash
    uv run --with httpx python loadtest.py run
    ```

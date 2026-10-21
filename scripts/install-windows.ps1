@@ -23,9 +23,14 @@ foreach ($f in @("$Win\localcbt-api.exe", "$Win\localcbt-caddy.exe", "$Win\caddy
 }
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv belum terpasang." }
 
-# .env hanya bisa dibaca Administrators & SYSTEM (berisi kata sandi DB & kunci backup).
-icacls $Env /inheritance:r /grant:r "Administrators:F" "SYSTEM:F" | Out-Null
+# Service berjalan sebagai LocalSystem: kode, .env, log, dan CA lokal Caddy hanya boleh diubah
+# (dan .env/CA hanya dibaca) Administrators & SYSTEM. Folder baru di C:\ mewarisi izin
+# "Authenticated Users: Modify" yang memungkinkan user biasa mengganti kode -> SYSTEM (M9-02).
 New-Item -ItemType Directory -Force "C:\LocalCBT\logs", "C:\LocalCBT\caddy" | Out-Null
+foreach ($dir in @($Root, "C:\LocalCBT")) {
+  icacls $dir /inheritance:r /grant:r "Administrators:(OI)(CI)F" "SYSTEM:(OI)(CI)F" /T /Q | Out-Null
+  if ($LASTEXITCODE) { throw "Gagal mengunci izin folder $dir" }
+}
 
 function Wait-Healthy {
   for ($i = 0; $i -lt 60; $i++) {
@@ -59,6 +64,7 @@ if (-not (Test-Path "$Root\apps\web\dist\index.html")) { throw "apps\web\dist be
 $HostLine = Select-String -Path $Env -Pattern '^LOCALCBT_PUBLIC_HOST=(.+)$' | Select-Object -First 1
 if (-not $HostLine) { throw "LOCALCBT_PUBLIC_HOST belum diisi di .env." }
 $PublicHost = $HostLine.Matches[0].Groups[1].Value.Trim("'", '"')
+if ($PublicHost -notmatch '^[A-Za-z0-9.-]{1,253}$') { throw "LOCALCBT_PUBLIC_HOST tidak valid: $PublicHost" }
 (Get-Content "$Win\localcbt-caddy.xml") -replace "__HOST__", $PublicHost |
   Set-Content "$Win\localcbt-caddy.generated.xml"
 Copy-Item "$Win\localcbt-caddy.exe" "$Win\localcbt-caddy.generated.exe" -Force

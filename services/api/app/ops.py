@@ -4,9 +4,11 @@ Restore TIDAK lewat HTTP: memulihkan DB yang sedang dipakai service tidak aman. 
 `python -m app.cli restore` (dipanggil wizard Control Center) ke DB baru, lalu service dialihkan.
 """
 
+import hashlib
 import ipaddress
 import json
 import os
+import secrets
 import shutil
 import socket
 import ssl
@@ -18,7 +20,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Connection, text
 
 from app import backup
@@ -199,44 +201,71 @@ def _tls_check(host: str) -> dict[str, str]:
     return _check("https", status, f"Sertifikat berlaku sampai {expires:%Y-%m-%d} ({days} hari).")
 
 
-def network_verdict(report: dict[str, Any] | None, now: datetime) -> dict[str, str]:
-    """Probe dari perangkat siswa. 'OK' hanya bila: dari subnet ujian, kontrol lokal lolos,
-    semua target internet terblokir, dan umur < 7 hari. Selain itu tidak pernah hijau."""
+def network_verdict(reports: list[dict[str, Any]], now: datetime) -> dict[str, str]:
+    """Probe dari perangkat siswa, satu putaran link probe. 'OK' hanya bila ada laporan dari
+    subnet ujian < 7 hari dan SEMUA laporan putaran itu: kontrol lokal lolos & semua target
+    terblokir. Diambil yang terburuk: laporan palsu "terblokir" tidak bisa menutupi laporan
+    asli "terjangkau" (M9-02). Selain itu tidak pernah hijau."""
     if not settings.exam_subnets:
         return _check("wan_blocked", "UNTESTED", "Subnet jaringan ujian belum diatur.")
-    if report is None:
-        return _check("wan_blocked", "UNTESTED", "Belum ada probe dari jaringan ujian.")
-    meta, at = report["metadata"], report["created_at"]
-    if now - at > PROBE_VALID:
-        return _check(
-            "wan_blocked", "UNTESTED", f"Probe terakhir {at:%Y-%m-%d}, sudah kedaluwarsa."
-        )
-    if not meta.get("control_ok"):
+    fresh = [r for r in reports if now - r["created_at"] <= PROBE_VALID]
+    if not fresh:
+        return _check("wan_blocked", "UNTESTED", "Belum ada probe dari jaringan ujian (7 hari).")
+    for r in fresh:
+        reachable = [t for t, x in r["metadata"]["results"].items() if x.get("reachable")]
+        if reachable:
+            return _check(
+                "wan_blocked",
+                "FAILED",
+                f"Internet MASIH terjangkau dari {r['metadata']['ip']}: {', '.join(reachable)}",
+            )
+    if not all(r["metadata"].get("control_ok") for r in fresh):
         return _check("wan_blocked", "FAILED", "Probe tidak sah: portal lokal tidak terjangkau.")
-    reachable = [t for t, r in meta.get("results", {}).items() if r.get("reachable")]
-    if reachable:
-        return _check("wan_blocked", "FAILED", f"Internet MASIH terjangkau: {', '.join(reachable)}")
+    last = max(fresh, key=lambda r: r["created_at"])
     return _check(
         "wan_blocked",
         "OK",
-        f"HTTPS ke internet terblokir dari {meta['ip']} pada {at:%Y-%m-%d %H:%M}.",
+        f"HTTPS ke internet terblokir ({len(fresh)} laporan, terakhir dari "
+        f"{last['metadata']['ip']} pada {last['created_at']:%Y-%m-%d %H:%M}).",
     )
 
 
-def latest_probe(db: Connection) -> dict[str, Any] | None:
-    row = (
-        db.execute(
-            text("""
-            select metadata, created_at from audit_events
-            where action = 'NETWORK_PROBE' and target_type = 'network'
-              and (metadata ->> 'in_exam_subnet')::boolean
-            order by created_at desc limit 1
-            """)
-        )
-        .mappings()
-        .first()
-    )
-    return dict(row) if row else None
+def probe_round(db: Connection) -> list[dict[str, Any]]:
+    """Semua laporan sah (subnet ujian) dari link probe terbaru yang sudah punya laporan."""
+    rows = db.execute(
+        text("""
+        with latest as (
+          select metadata ->> 'link_id' as link_id from audit_events
+          where action = 'NETWORK_PROBE' and target_type = 'network'
+            and (metadata ->> 'in_exam_subnet')::boolean and metadata ? 'link_id'
+          order by created_at desc limit 1)
+        select metadata, created_at from audit_events
+        where action = 'NETWORK_PROBE' and (metadata ->> 'in_exam_subnet')::boolean
+          and metadata ->> 'link_id' = (select link_id from latest)
+        """)
+    ).mappings()
+    return [dict(r) for r in rows]
+
+
+PROBE_LINK_TTL = timedelta(hours=24)
+
+
+def _key_hash(k: str) -> str:
+    return hashlib.sha256(k.encode()).hexdigest()
+
+
+def create_probe_link(db: Connection, actor_id: UUID | None) -> dict[str, Any]:
+    """Link probe sekali-putaran untuk dibuka admin di perangkat SSID ujian. Hanya hash
+    kuncinya yang disimpan; laporan tanpa kunci sah ditolak (M9-02)."""
+    k = secrets.token_urlsafe(16)
+    audit(db, actor_id, "NETWORK_PROBE_LINK", "network", NETWORK,
+          metadata={"k_hash": _key_hash(k)})  # fmt: skip
+    host = settings.public_host
+    return {
+        "url": f"https://{host}/api/v1/ops/probe?k={k}" if host else None,
+        "path": f"/api/v1/ops/probe?k={k}",
+        "valid_hours": int(PROBE_LINK_TTL.total_seconds() // 3600),
+    }
 
 
 CLOCK_SKEW_MAX = 5
@@ -290,7 +319,7 @@ def run_preflight(db: Connection | None) -> list[dict[str, str]]:
         checks.append(_check("https", "UNTESTED", "PUBLIC_HOST belum diatur."))
     checks.append(clock_check(db))
     if db is not None:
-        checks.append(network_verdict(latest_probe(db), datetime.now(UTC)))
+        checks.append(network_verdict(probe_round(db), datetime.now(UTC)))
     return checks
 
 
@@ -348,9 +377,11 @@ _PROBE_JS = """(async () => {
     row(`${id}: ${r.reachable ? "TERJANGKAU (internet terbuka!)" : "terblokir"}`, r.reachable);
   const res = await fetch("/api/v1/ops/probe-reports", {method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({control_ok: control.reachable, results})});
+    body: JSON.stringify({control_ok: control.reachable, results,
+      k: new URLSearchParams(location.search).get("k") || ""})});
   document.getElementById("done").textContent = res.ok
-    ? "Hasil terkirim ke operator. Terima kasih." : "Hasil gagal dikirim.";
+    ? "Hasil terkirim ke operator. Terima kasih."
+    : "Hasil gagal dikirim (link probe tidak sah/kedaluwarsa? minta link baru ke operator).";
 })();"""
 
 
@@ -376,7 +407,15 @@ class ProbeResult(BaseModel):
 
 class ProbeReport(BaseModel):
     control_ok: bool
-    results: dict[TargetId, ProbeResult] = Field(min_length=1)
+    results: dict[TargetId, ProbeResult]
+    k: str = Field(min_length=10, max_length=64)
+
+    @model_validator(mode="after")
+    def all_targets(self) -> "ProbeReport":
+        # Laporan parsial (mis. hanya target yang memang terblokir) tidak boleh dihitung.
+        if set(self.results) != set(PROBE_TARGETS):
+            raise ValueError("Laporan probe harus memuat semua target.")
+        return self
 
 
 def in_exam_subnet(ip: str) -> bool:
@@ -390,10 +429,20 @@ def in_exam_subnet(ip: str) -> bool:
 @router.post("/probe-reports", status_code=201)
 def probe_report(body: ProbeReport, request: Request, db: DB) -> dict[str, Any]:
     ip = request.client.host if request.client else "-"
-    if wait := probe_limiter.retry_after("probe", ip):
+    if wait := probe_limiter.acquire("probe", ip):
         raise ApiError(429, "RATE_LIMITED", "Terlalu sering.", {"Retry-After": str(wait)})
-    probe_limiter.fail("probe", ip)  # hitung setiap laporan, bukan hanya yang gagal
+    link_id = db.scalar(
+        text("""
+        select id from audit_events
+        where action = 'NETWORK_PROBE_LINK' and metadata ->> 'k_hash' = :h
+          and created_at > now() - make_interval(secs => :ttl)
+        """),
+        {"h": _key_hash(body.k), "ttl": int(PROBE_LINK_TTL.total_seconds())},
+    )
+    if link_id is None:
+        raise ApiError(403, "PROBE_LINK_INVALID", "Link probe tidak sah atau kedaluwarsa.")
     meta = {
+        "link_id": str(link_id),
         "ip": ip,
         "in_exam_subnet": in_exam_subnet(ip),
         "control_ok": body.control_ok,
@@ -414,12 +463,15 @@ def network_data(db: Connection) -> dict[str, Any]:
         .mappings()
         .first()
     )
-    host = settings.public_host
     return {
-        "probe": network_verdict(latest_probe(db), datetime.now(UTC)),
-        "probe_url": f"https://{host}/api/v1/ops/probe" if host else None,
+        "probe": network_verdict(probe_round(db), datetime.now(UTC)),
         "last_attestation": dict(attest) if attest else None,
     }
+
+
+@router.post("/probe-links", status_code=201)
+def new_probe_link(user: Admin, db: DB) -> dict[str, Any]:
+    return create_probe_link(db, user.id)
 
 
 @router.get("/network")

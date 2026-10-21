@@ -14,6 +14,8 @@ from app.config import settings
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
+    # Parameter SQL (hash sandi, token CSRF, jawaban) tidak ikut ke pesan error/log (M9-02).
+    hide_parameters=True,
     pool_size=10,
     max_overflow=30,
     connect_args={"connect_timeout": 2},

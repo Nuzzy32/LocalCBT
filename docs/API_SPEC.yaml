@@ -1140,10 +1140,23 @@ paths:
       security: []
       responses:
         '200': {description: HTML}
+  /ops/probe-links:
+    post:
+      tags: [Operations]
+      summary: Buat link probe (kunci acak, berlaku 24 jam; hanya hash yang disimpan)
+      operationId: createProbeLink
+      x-roles: [ADMIN]
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      responses:
+        '201':
+          description: URL /api/v1/ops/probe?k=... untuk dibuka di perangkat SSID ujian
   /ops/probe-reports:
     post:
       tags: [Operations]
-      summary: Laporan probe tanpa login; tanpa PII; dibatasi per IP; IP di luar subnet ujian tidak dihitung
+      summary: Laporan probe tanpa login; wajib kunci link sah & SEMUA target; tanpa PII; dibatasi per IP
+      description: >
+        M9-02: verdict = laporan TERBURUK dari putaran link terbaru (subnet ujian, < 7 hari), sehingga
+        laporan palsu "terblokir" tidak bisa menutupi laporan asli "terjangkau".
       operationId: submitProbeReport
       security: []
       requestBody:
@@ -1152,8 +1165,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [control_ok, results]
+              required: [control_ok, results, k]
               properties:
+                k: {type: string, minLength: 10, maxLength: 64, description: kunci dari link probe}
                 control_ok: {type: boolean}
                 results:
                   type: object
@@ -1167,6 +1181,7 @@ paths:
                       ms: {type: integer, minimum: 0, maximum: 60000}
       responses:
         '201': {description: Tercatat (audit NETWORK_PROBE)}
+        '403': {description: PROBE_LINK_INVALID (kunci tidak sah/kedaluwarsa)}
         '422': {$ref: '#/components/responses/ValidationError'}
         '429': {$ref: '#/components/responses/RateLimited'}
   # M8: POST /ops/backups/{backupId}/restore DIHAPUS. Memulihkan DB yang sedang dipakai service dari

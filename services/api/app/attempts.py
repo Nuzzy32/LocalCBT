@@ -42,9 +42,9 @@ def _grant(exam_id: UUID, user_id: UUID, exp: int) -> str:
 
 def _grant_ok(grant: str, exam_id: UUID, user_id: UUID) -> bool:
     exp_text, _, _ = grant.partition(".")
-    if not exp_text.isdigit() or int(exp_text) < time.time():
+    if not (exp_text.isascii() and exp_text.isdigit()) or int(exp_text) < time.time():
         return False
-    return hmac.compare_digest(grant, _grant(exam_id, user_id, int(exp_text)))
+    return hmac.compare_digest(grant.encode(), _grant(exam_id, user_id, int(exp_text)).encode())
 
 
 ASSIGNED = """exists (select 1 from exam_assignments ea
@@ -384,7 +384,7 @@ def verify_token(
     _ensure_open(exam)
     ip = request.client.host if request.client else "-"
     key = f"{exam_id}:{user.id}"
-    wait = token_limiter.retry_after(key, ip)
+    wait = token_limiter.acquire(key, ip)
     if wait:
         raise ApiError(
             429,
@@ -393,7 +393,6 @@ def verify_token(
             {"Retry-After": str(wait)},
         )
     if not verify_password(exam["token_hash"], body.token):
-        token_limiter.fail(key, ip)
         raise ApiError(403, "TOKEN_INVALID", "Token tidak sesuai. Tanyakan token kepada pengawas.")
     token_limiter.success(key, ip)
     exp = int(time.time()) + GRANT_TTL

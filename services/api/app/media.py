@@ -103,6 +103,29 @@ def media_readable(db: Connection, user_id: UUID, media_id: UUID) -> bool:
     )
 
 
+def media_attachable(db: Connection, user_id: UUID, media_id: UUID) -> bool:
+    """Boleh dipasang ke soal/stimulus milik sendiri: pengunggah, atau gambar dipakai di bank
+    yang dimiliki / dibagikan minimal COPY. Izin VIEW hanya untuk melihat (M9-02)."""
+    return bool(
+        db.scalar(
+            text("""
+            select 1 from media_assets m
+            where m.id = :id and (
+              m.created_by = :uid
+              or exists (
+                select 1 from question_banks b
+                left join bank_shares s on s.bank_id = b.id and s.teacher_id = :uid
+                where (b.owner_teacher_id = :uid or s.permission in ('COPY', 'EDIT'))
+                  and (exists (select 1 from questions q
+                               where q.bank_id = b.id and q.media_asset_id = m.id)
+                       or exists (select 1 from stimuli st
+                                  where st.bank_id = b.id and st.media_asset_id = m.id))))
+            """),
+            {"id": media_id, "uid": user_id},
+        )
+    )
+
+
 def media_url(media_id: Any) -> str | None:
     return f"/api/v1/media/{media_id}" if media_id else None
 

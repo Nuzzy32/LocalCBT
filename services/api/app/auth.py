@@ -69,29 +69,32 @@ class LoginRateLimiter:
         # Kunci (username, ip): teman sekelas di perangkat lain tidak bisa mengunci akun siswa.
         return [(f"u:{username}|{ip}", self.per_user), (f"ip:{ip}", self.per_ip)]
 
-    def retry_after(self, username: str, ip: str) -> int:
+    def acquire(self, username: str, ip: str) -> int:
+        """Cek & catat percobaan sekaligus (atomik, M9-02): permintaan paralel tidak bisa lolos
+        semua sebelum kegagalannya sempat tercatat. 0 = boleh (sudah dihitung), >0 = detik tunggu.
+        Percobaan yang berhasil dikembalikan lewat success()."""
         now = time.monotonic()
+        keys = self._keys(username, ip)
         with self._lock:
             wait = 0.0
-            for key, limit in self._keys(username, ip):
-                fails = self._fails.get(key)
-                if not fails:
-                    continue
-                while fails and fails[0] <= now - self.window:
-                    fails.popleft()
-                if len(fails) >= limit:
-                    wait = max(wait, fails[0] + self.window - now)
-            return int(wait) + 1 if wait else 0
-
-    def fail(self, username: str, ip: str) -> None:
-        now = time.monotonic()
-        with self._lock:
-            for key, _ in self._keys(username, ip):
-                self._fails.setdefault(key, deque()).append(now)
+            for key, limit in keys:
+                tries = self._fails.setdefault(key, deque())
+                while tries and tries[0] <= now - self.window:
+                    tries.popleft()
+                if len(tries) >= limit:
+                    wait = max(wait, tries[0] + self.window - now)
+            if wait:
+                return int(wait) + 1
+            for key, _ in keys:
+                self._fails[key].append(now)
+            return 0
 
     def success(self, username: str, ip: str) -> None:
+        user_key, ip_key = (k for k, _ in self._keys(username, ip))
         with self._lock:
-            self._fails.pop(self._keys(username, ip)[0][0], None)
+            self._fails.pop(user_key, None)
+            if tries := self._fails.get(ip_key):
+                tries.pop()  # login sukses satu lab di balik NAT tidak menghabiskan jatah IP
 
     def reset(self) -> None:
         with self._lock:
@@ -137,9 +140,14 @@ def session_user(db: Connection, token: str | None) -> CurrentUser | None:
             join users u on u.id = s.user_id
             left join user_roles r on r.user_id = u.id
             where s.token_hash = :h and s.expires_at > now() and u.status = 'ACTIVE'
+              -- Komputer lab bersama (M9-02): sesi siswa yang diam habis lebih cepat. Selama
+              -- ujian heartbeat 5 dtk menjaganya tetap hidup.
+              and (s.last_seen_at > now() - make_interval(secs => :idle)
+                   or not exists (select 1 from user_roles x
+                                  where x.user_id = u.id and x.role = 'STUDENT'))
             group by s.token_hash, u.id
             """),
-            {"h": _token_hash(token)},
+            {"h": _token_hash(token), "idle": settings.student_session_idle_seconds},
         )
         .mappings()
         .first()
@@ -199,7 +207,7 @@ class LoginRequest(BaseModel):
 def login(body: LoginRequest, request: Request, response: Response, db: DB) -> dict[str, Any]:
     ip = request.client.host if request.client else "-"
     username = body.username.strip().lower()
-    wait = limiter.retry_after(username, ip)
+    wait = limiter.acquire(username, ip)
     if wait:
         raise ApiError(
             429,
@@ -219,8 +227,10 @@ def login(body: LoginRequest, request: Request, response: Response, db: DB) -> d
     # Username tak dikenal tetap memverifikasi hash dummy: waktu respons tidak membocorkan akun.
     valid = verify_password(row["password_hash"] if row else _DUMMY_HASH, body.password)
     if row is None or not valid or row["status"] != "ACTIVE":
-        limiter.fail(username, ip)
         raise ApiError(401, "INVALID_CREDENTIALS", "NIS/username atau kata sandi tidak sesuai.")
+    # Kata sandi benar: bukan tebakan. Penolakan berikutnya (mis. 409 sesi aktif saat menunggu
+    # izin pengawas) tidak boleh menghabiskan jatah percobaan.
+    limiter.success(username, ip)
 
     user_id = row["id"]
     # Kunci baris user: dua login bersamaan tidak bisa sama-sama lolos cek sesi aktif.
@@ -272,7 +282,6 @@ def login(body: LoginRequest, request: Request, response: Response, db: DB) -> d
         """),
         {"h": _token_hash(token), "id": user_id, "csrf": csrf, "ttl": settings.session_ttl_seconds},
     )
-    limiter.success(username, ip)
     response.set_cookie(
         COOKIE, token, httponly=True, secure=settings.cookie_secure, samesite="strict", path="/api"
     )

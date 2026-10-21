@@ -36,7 +36,7 @@ from app.db import engine
 log = logging.getLogger("localcbt.backup")
 
 FORMAT = "localcbt-backup/1"
-MAGIC = b"LCBK1\n"
+MAGIC = b"LCBK2\n"  # 2: scrypt N=2^17 (M9-02); LCBK1 (N=2^15) hanya ada sebelum pilot
 CHUNK = 1 << 20
 LOCK_KEY = 0x4C434231  # advisory lock: satu proses backup/restore pada satu waktu
 COUNT_TABLES = (
@@ -64,7 +64,7 @@ class BackupError(Exception):
 
 def _key(passphrase: str, salt: bytes) -> bytes:
     return hashlib.scrypt(
-        passphrase.encode(), salt=salt, n=2**15, r=8, p=1, maxmem=64 * 2**20, dklen=32
+        passphrase.encode(), salt=salt, n=2**17, r=8, p=1, maxmem=256 * 2**20, dklen=32
     )
 
 
@@ -207,6 +207,25 @@ def _open_private(path: Path) -> IO[bytes]:
     return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb")
 
 
+# ---- Folder kerja ---------------------------------------------------------------
+TMP_PREFIX = "localcbt-"
+
+
+def _workdir(kind: str) -> "tempfile.TemporaryDirectory[str]":
+    """Folder 0700 di disk sistem, BUKAN di backup_dir: backup_dir bisa flashdisk FAT tanpa
+    izin berkas, dan db.dump di sini belum terenkripsi (M9-02)."""
+    return tempfile.TemporaryDirectory(prefix=f"{TMP_PREFIX}{kind}")
+
+
+def clean_stale_workdirs() -> None:
+    """Sisa folder kerja dari proses yang mati (kill -9, listrik padam) berisi data mentah."""
+    roots = [Path(tempfile.gettempdir()), Path(settings.backup_dir)]
+    for root in roots:
+        for pattern in (f"{TMP_PREFIX}*", ".tmp-*", ".verify-*", ".restore-*"):
+            for p in root.glob(pattern) if root.is_dir() else []:
+                shutil.rmtree(p, ignore_errors=True)
+
+
 # ---- Membuat & memverifikasi ----------------------------------------------------
 
 
@@ -218,7 +237,7 @@ def create_backup(folder: Path, passphrase: str) -> dict[str, Any]:
         pg_dump = pg_tool("pg_dump", db)
     _private_dir(folder.parent)
     folder.mkdir(mode=0o700)
-    with tempfile.TemporaryDirectory(dir=folder.parent, prefix=".tmp-") as tmp:
+    with _workdir("tmp-") as tmp:
         dump = Path(tmp) / "db.dump"
         snap_engine = engine.execution_options(isolation_level="REPEATABLE READ")
         with snap_engine.connect() as snap, snap.begin():
@@ -305,7 +324,7 @@ def unpack(folder: Path, passphrase: str, workdir: Path, media_out: Path | None)
 
 
 def verify_backup(folder: Path, passphrase: str) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(dir=folder.parent, prefix=".verify-") as tmp:
+    with _workdir("verify-") as tmp:
         manifest = unpack(folder, passphrase, Path(tmp), None)
         with engine.connect() as db:
             pg_restore = pg_tool("pg_restore", db)
@@ -340,7 +359,7 @@ def restore_backup(
             conn.execute(text(f'create database "{target_db}" owner "{owner}"'))
         target_url = app_url.set(database=target_db).render_as_string(hide_password=False)
         try:
-            with tempfile.TemporaryDirectory(dir=folder.parent, prefix=".restore-") as tmp:
+            with _workdir("restore-") as tmp:
                 manifest = unpack(folder, passphrase, Path(tmp), media_out)
                 args = [pg_restore, "--no-owner", "--no-privileges", "--exit-on-error"]
                 _run([*args, "-d", target_db, str(Path(tmp) / "db.dump")], _pg_env(target_url))
@@ -429,6 +448,7 @@ def queue_backup(db: Connection, trigger: str, requested_by: UUID | None) -> UUI
 
 
 def _fail_stale() -> None:
+    clean_stale_workdirs()
     # Dipanggil sambil memegang ops_lock: RUNNING yang tersisa pasti dari proses yang mati.
     with engine.begin() as db:
         db.execute(

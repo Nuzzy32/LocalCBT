@@ -25,6 +25,11 @@
 		<string>75</string>
 		<string>--no-access-log</string>
 	</array>
+	<!-- Bukan root (M9-02): kode & venv dimiliki user operator, jadi service juga berjalan sebagai
+	     user itu; root akan menjalankan kode yang bisa diubah tanpa sudo. Caddy boleh bind :443
+	     tanpa root sejak macOS 10.14. -->
+	<key>UserName</key>
+	<string>__USER__</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>

@@ -21,7 +21,14 @@
 		<string>__ROOT__/apps/web/dist</string>
 		<key>XDG_DATA_HOME</key>
 		<string>/Library/Application Support/LocalCBT</string>
+		<key>XDG_CONFIG_HOME</key>
+		<string>/Library/Application Support/LocalCBT</string>
 	</dict>
+	<!-- Bukan root (M9-02): kode & venv dimiliki user operator, jadi service juga berjalan sebagai
+	     user itu; root akan menjalankan kode yang bisa diubah tanpa sudo. Caddy boleh bind :443
+	     tanpa root sejak macOS 10.14. -->
+	<key>UserName</key>
+	<string>__USER__</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>

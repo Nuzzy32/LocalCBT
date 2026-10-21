@@ -9,10 +9,9 @@ import json
 from io import BytesIO
 from typing import Annotated, Any, Literal
 from uuid import UUID
-from xml.etree.ElementTree import Element, ParseError
+from xml.etree.ElementTree import Element
 from xml.sax.saxutils import escape
 
-from defusedxml import DefusedXmlException
 from defusedxml.ElementTree import fromstring
 from fastapi import APIRouter, Depends, Response, UploadFile
 from openpyxl import Workbook, load_workbook
@@ -32,6 +31,9 @@ LETTERS = "ABCDE"
 HEADER = ["Jenis", "Stimulus", "Pertanyaan", "Bobot", "Kunci"] + [f"Opsi {c}" for c in LETTERS]
 TYPES = {"PG": "SINGLE_CHOICE", "MCMA": "MULTIPLE_CHOICE", "KATEGORI": "CATEGORY_CHOICE"}
 MAX_QUESTIONS = 500
+MAX_SHEET_ROWS = 5000
+MAX_DOCX_XML = 5 * 1024 * 1024  # 500 soal nyata jauh di bawah ini
+TOO_MANY_ROWS_MSG = "Lembar kerja terlalu panjang. Hapus baris kosong/format di bawah data."
 EXAMPLES = [
     {
         "Jenis": "PG",
@@ -111,7 +113,8 @@ def to_question(cells: dict[str, str]) -> tuple[dict[str, Any] | None, list[tupl
 def parse_xlsx(data: bytes) -> list[Row]:
     try:
         wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
-        rows = wb.worksheets[0].iter_rows(values_only=True)
+        # max_col: sel di kolom XFD tidak membuat setiap baris jadi 16 ribu nilai (M9-02).
+        rows = wb.worksheets[0].iter_rows(max_col=len(HEADER), values_only=True)
         header = [cell_text(c).lower() for c in next(rows, ())[: len(HEADER)]]
         if header != [h.lower() for h in HEADER]:
             raise ApiError(
@@ -119,9 +122,17 @@ def parse_xlsx(data: bytes) -> list[Row]:
             )
         out: list[Row] = []
         for number, row in enumerate(rows, start=2):
+            # Nomor baris fisik dicek SEBELUM baris kosong dilewati: openpyxl menghasilkan
+            # setiap baris kosong sampai nomor baris yang diklaim berkas (bisa 10^15).
+            if number > MAX_SHEET_ROWS:
+                raise ApiError(413, "TOO_MANY_ROWS", TOO_MANY_ROWS_MSG)
             values = [cell_text(c) for c in row[: len(HEADER)]]
             if not any(values):
                 continue
+            if len(out) >= MAX_QUESTIONS:
+                raise ApiError(
+                    413, "TOO_MANY_QUESTIONS", f"Maksimal {MAX_QUESTIONS} soal per berkas."
+                )
             out.append((number, dict(zip(HEADER, values, strict=False)), []))
         wb.close()
         return out
@@ -169,10 +180,14 @@ def _cell_text(tc: Element) -> str:
 def parse_docx(data: bytes) -> list[Row]:
     zf = check_zip(data)
     try:
+        if zf.getinfo("word/document.xml").file_size > MAX_DOCX_XML:
+            raise ApiError(413, "FILE_TOO_LARGE", "Dokumen terlalu besar untuk diimpor.")
         root = fromstring(zf.read("word/document.xml"))
     except KeyError as e:
         raise ApiError(422, "INVALID_FILE", "Berkas bukan dokumen Word (.docx).") from e
-    except (ParseError, DefusedXmlException) as e:  # termasuk DTD/entity bomb
+    except ApiError:
+        raise
+    except Exception as e:  # berkas tak tepercaya: XML bom, zip rusak, metode kompresi aneh
         raise ApiError(422, "INVALID_FILE", "Isi dokumen Word tidak dapat dibaca.") from e
     body = root.find(f"{W}body")
     tables = body.findall(f"{W}tbl") if body is not None else []
