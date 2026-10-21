@@ -72,6 +72,22 @@ melawan tebak sandi) dan 30 siswa menekannya pada saat yang sama.
    thread, login serentak bisa memakan sekitar 2,5 GB RAM sekaligus. Perbaikan: hash/verifikasi
    dibatasi sejumlah core CPU (`_hash_slots`, `app/auth.py`).
 
+## Keputusan terbuka: biaya login di CPU lemah
+
+Di runner CI (2 vCPU bersama), 30 login serentak memberi P95 **1,56–2,03 dtk** dan verifikasi
+token sampai **2,2 dtk**, karena keduanya Argon2id parameter default (64 MiB, t=3, p=4). Simpan
+jawaban tetap cepat (P95 47–73 ms). Server sekolah dengan CPU lemah kemungkinan berperilaku
+seperti CI. Ada dua pilihan:
+
+- **Tetap default (RFC 9106):** paling tahan tebak sandi bila database bocor; login saat bel ujian
+  bisa 2–3 dtk di server lemah.
+- **Turunkan ke minimum OWASP** (m=19 MiB, t=2, p=1): login kira-kira 3× lebih ringan; hash lama
+  tetap valid dan diperbarui otomatis saat login berikutnya.
+
+Keputusan diambil setelah uji beban di server sekolah. CI memakai `--latency-factor 2`: CI
+menjaga regresi error, macet, dan integritas; target latensi PRD dinilai di perangkat keras
+sekolah dengan faktor 1.
+
 ## Batasan & yang belum dibuktikan
 
 - **Belum diuji di perangkat keras sekolah** (DEC-07, OQ-03) maupun lewat Wi-Fi/AP sekolah

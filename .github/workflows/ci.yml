@@ -51,7 +51,7 @@ jobs:
           uv run uvicorn app.main:app --port 8100 --timeout-keep-alive 75 --no-access-log &
           for i in $(seq 1 30); do curl -fs http://127.0.0.1:8100/api/v1/healthz && break; sleep 1; done
           uv run python loadtest.py seed --confirm-db localcbt_load --base-url http://127.0.0.1:8100 --questions 20
-          uv run python loadtest.py run --think 0.5
+          uv run python loadtest.py run --think 0.5 --latency-factor 2
       - uses: actions/upload-artifact@v7
         if: always()
         with:

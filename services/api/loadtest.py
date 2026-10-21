@@ -419,13 +419,15 @@ def _pct(values: list[float], p: float) -> float:
     return statistics.quantiles(values, n=100, method="inclusive")[int(p) - 1]
 
 
-def report(stats: Stats, wall: float, students: int) -> tuple[bool, dict[str, Any]]:
+def report(
+    stats: Stats, wall: float, students: int, factor: float = 1.0
+) -> tuple[bool, dict[str, Any]]:
     rows, ok = {}, True
     for name, vals in sorted(stats.latencies.items()):
         if name == "monitor_ws_interval":
             continue
         p95 = _pct(vals, 95)
-        limit = TARGET_P95.get(name, DEFAULT_P95)
+        limit = TARGET_P95.get(name, DEFAULT_P95) * factor
         passed = p95 <= limit and not stats.errors.get(name)
         ok &= passed
         rows[name] = {
@@ -456,7 +458,7 @@ def report(stats: Stats, wall: float, students: int) -> tuple[bool, dict[str, An
     }
 
 
-async def run(students: int | None, think: float) -> int:
+async def run(students: int | None, think: float, factor: float = 1.0) -> int:
     cfg = json.loads(CREDENTIALS.read_text())
     names = cfg["students"][:students] if students else cfg["students"]
     stats = Stats()
@@ -472,7 +474,7 @@ async def run(students: int | None, think: float) -> int:
     )
     stop.set()
     await side
-    ok, data = report(stats, time.perf_counter() - t0, len(names))
+    ok, data = report(stats, time.perf_counter() - t0, len(names), factor)
     print(f"\n{'endpoint':<14}{'n':>6}{'err':>5}{'p50':>7}{'p95':>7}{'p99':>7}{'max':>7}  target")
     for name, r in data["endpoints"].items():
         mark = "OK " if r["pass"] else "GAGAL"
@@ -502,11 +504,14 @@ def main() -> None:
     p = sub.add_parser("run")
     p.add_argument("--students", type=int)
     p.add_argument("--think", type=float, default=2.0, help="rata-rata detik antar jawaban")
+    # CI (runner 2 vCPU bersama) = penjaga regresi error/deadlock/integritas; target latensi PRD
+    # dinilai di perangkat keras sekolah dengan faktor 1.
+    p.add_argument("--latency-factor", type=float, default=1.0)
     args = parser.parse_args()
     if args.cmd == "seed":
         seed(args.base_url, args.confirm_db, args.students, args.questions, args.minutes)
     else:
-        sys.exit(asyncio.run(run(args.students, args.think)))
+        sys.exit(asyncio.run(run(args.students, args.think, args.latency_factor)))
 
 
 if __name__ == "__main__":
