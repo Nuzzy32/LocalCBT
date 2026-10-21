@@ -443,3 +443,35 @@ def test_cli_retention_and_service_action_audited(monkeypatch: pytest.MonkeyPatc
             )
         )
     assert actions == ["OPS_SETTINGS_CHANGED", "SERVICE_STOP", "SERVICE_START"]
+
+
+def test_clock_check_detects_db_vs_server_skew(monkeypatch: pytest.MonkeyPatch) -> None:
+    # M9-04: jam VM/DB bisa tertinggal dari jam server (ditemukan saat uji gangguan).
+    with engine.connect() as db:
+        db_now = float(db.scalar(text("select extract(epoch from now())")))
+        monkeypatch.setattr(ops.time, "time", lambda: db_now + 60)
+        assert ops.clock_check(db)["status"] == "FAILED"
+        monkeypatch.setattr(ops.time, "time", lambda: db_now + 1)
+        assert ops.clock_check(db)["status"] == "WARNING"  # NTP tetap dicek manusia
+    assert ops.clock_check(None)["status"] == "UNTESTED"
+
+
+def test_disk_full_during_backup_fails_loudly_and_cleans_up(
+    backups: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # M9-04: disk/drive backup penuh di tengah penulisan -> FAILED + alasan, tanpa sisa parsial
+    # (data siswa terdekripsi tidak boleh tertinggal di folder sementara).
+    import errno
+
+    _seed_media()
+
+    def full(self: backup.Encryptor, data: bytes) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(backup.Encryptor, "write", full)
+    with pytest.raises(cli.CliError, match="No space left"):
+        cli.run_backup()
+    (job,) = cli.list_backups()
+    assert job["status"] == "FAILED" and "No space left" in job["error"]
+    assert list(backups.iterdir()) == []  # tidak ada folder backup maupun .tmp-* tersisa
+    assert cli.status()["last_backup"]["status"] == "FAILED"

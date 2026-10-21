@@ -34,7 +34,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 ignore = ["S101"]
 # F811: fixture diimpor lintas modul tes. loadtest: TLS `tls internal` di jaringan uji (S501),
 # acak untuk perilaku siswa simulasi, bukan kriptografi (S311).
-per-file-ignores = { "tests/*" = ["S105", "S106", "F811"], "loadtest.py" = ["S501", "S311"] }
+per-file-ignores = { "tests/*" = ["S105", "S106", "F811"], "loadtest.py" = ["S501", "S311"], "chaos.py" = ["S311"] }
 
 [tool.mypy]
 strict = true

@@ -10,6 +10,7 @@ import os
 import shutil
 import socket
 import ssl
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -238,6 +239,23 @@ def latest_probe(db: Connection) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+CLOCK_SKEW_MAX = 5
+
+
+def clock_check(db: Connection | None) -> dict[str, str]:
+    """NFR-14. Jam DB & jam proses API harus sama: batas waktu ujian dihitung dari jam DB,
+    izin mulai/token dari jam proses. Sinkron NTP tetap harus dicek operator."""
+    if db is None:
+        return _check("clock", "UNTESTED", "Database mati.")
+    skew = abs(float(db.scalar(text("select extract(epoch from now())")) or 0) - time.time())
+    if skew > CLOCK_SKEW_MAX:
+        return _check("clock", "FAILED", f"Jam database berselisih {skew:.0f} dtk dari jam server.")
+    return _check(
+        "clock", "WARNING",
+        f"Jam DB & server cocok (selisih {skew:.1f} dtk). Pastikan juga tersinkron NTP.",
+    )  # fmt: skip
+
+
 def run_preflight(db: Connection | None) -> list[dict[str, str]]:
     health = health_data(db)
     checks = [
@@ -270,9 +288,7 @@ def run_preflight(db: Connection | None) -> list[dict[str, str]]:
         checks += [_dns_check(settings.public_host), _tls_check(settings.public_host)]
     else:
         checks.append(_check("https", "UNTESTED", "PUBLIC_HOST belum diatur."))
-    checks.append(
-        _check("clock", "UNTESTED", "Pastikan jam server tersinkron (NTP) sebelum ujian.")
-    )
+    checks.append(clock_check(db))
     if db is not None:
         checks.append(network_verdict(latest_probe(db), datetime.now(UTC)))
     return checks

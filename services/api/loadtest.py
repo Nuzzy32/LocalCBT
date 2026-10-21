@@ -27,7 +27,7 @@ import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -152,7 +152,8 @@ def seed(base_url: str, confirm_db: str, students: int, questions: int, minutes:
             r = c.post(f"/api/v1/question-banks/{bank}/questions", json=_question(i))
             r.raise_for_status()
             qids.append(r.json()["id"])
-        now = datetime.now(UTC)
+        with engine.connect() as db:  # jam DB = jam yang dipakai server, bukan jam mesin ini
+            now = db.scalar(text("select now()"))
         exams = []
         for label, cls in zip("AB", classes, strict=True):
             r = c.post(

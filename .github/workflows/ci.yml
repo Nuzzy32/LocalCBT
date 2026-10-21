@@ -52,6 +52,16 @@ jobs:
           for i in $(seq 1 30); do curl -fs http://127.0.0.1:8100/api/v1/healthz && break; sleep 1; done
           uv run python loadtest.py seed --confirm-db localcbt_load --base-url http://127.0.0.1:8100 --questions 20
           uv run python loadtest.py run --think 0.5 --latency-factor 2
+      # M9-04: kill -9 server, restart PostgreSQL, Wi-Fi putus, refresh (lihat chaos.py).
+      - name: Uji gangguan
+        env:
+          LOCALCBT_DATABASE_URL: postgresql+psycopg://localcbt:localcbt-dev@127.0.0.1:5432/localcbt_chaos
+          PGPASSWORD: localcbt-dev
+        run: |
+          /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -U localcbt localcbt_chaos
+          uv run alembic upgrade head
+          uv run python chaos.py --confirm-db localcbt_chaos \
+            --db-restart-cmd "sh -c 'docker restart \$(docker ps -q --filter ancestor=postgres:16)'"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

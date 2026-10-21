@@ -202,6 +202,32 @@ dan catat waktu kejadian. Siswa melanjutkan attempt yang sama setelah server pul
 
 ---
 
+### 8.1 SOP listrik padam / server mati mendadak
+
+Yang dijamin sistem (diuji M9-04, [bukti](evidence/M9-04_CHAOS_TEST.md)):
+- Jawaban yang sudah berstatus **"Tersimpan di server"** tidak hilang, termasuk bila server mati
+  mendadak di tengah penyimpanan.
+- Lama server mati **otomatis ditambahkan** ke waktu siswa yang sedang ujian (DEC-03), tanpa
+  memakai jatah jeda 5/10 menit siswa.
+- Siswa melanjutkan **attempt yang sama**; timer tidak kembali ke awal.
+
+Langkah operator:
+1. **Saat padam:** catat jamnya. Minta pengawas menenangkan siswa: jangan menutup browser, jangan
+   pindah perangkat. Jawaban yang belum sempat tersimpan di server bisa hilang dan perlu diisi ulang.
+2. **Listrik kembali:** nyalakan router/AP **dulu**, lalu server. Service API, Caddy, dan
+   PostgreSQL menyala sendiri (tidak perlu login atau membuka Control Center).
+3. Buka **Control Center → Ringkasan**: Service **RUNNING**, Database **OK**. Bila belum, tunggu
+   1–2 menit, lalu **Layanan → Start**.
+4. Siswa **memuat ulang halaman** (atau login lagi di perangkat yang sama) dan melanjutkan.
+   Pengawas memastikan status kembali **Aktif** di monitor.
+5. Bila siswa ditolak "Akun masih aktif pada perangkat lain" karena pindah perangkat, pengawas
+   memakai **Izinkan pindah perangkat / reset sesi** seperti biasa.
+6. **Setelah ujian:** jalankan **Backup sekarang** dan catat kejadian di berita acara (jam padam,
+   jam pulih, jumlah siswa terdampak).
+
+Tidak dijamin: jawaban yang masih "tersimpan di perangkat" saat perangkat siswa ikut mati, dan
+kerusakan disk server akibat padam (karena itu disarankan UPS dan backup harian).
+
 ## 9. Perintah terminal (cadangan)
 
 Dari folder `services/api`:

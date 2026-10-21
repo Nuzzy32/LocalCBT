@@ -30,3 +30,4 @@ infrastructure/windows/*.generated.xml
 # Uji beban: akun uji & laporan lokal
 .loadtest.json
 loadtest-report-*.json
+.chaos.json
