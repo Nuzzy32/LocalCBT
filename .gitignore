@@ -26,3 +26,7 @@ dist/
 # Biner Windows (WinSW/caddy) & konfigurasi hasil installer
 infrastructure/windows/*.exe
 infrastructure/windows/*.generated.xml
+
+# Uji beban: akun uji & laporan lokal
+.loadtest.json
+loadtest-report-*.json

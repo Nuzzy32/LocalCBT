@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -34,6 +35,13 @@ from app.db import database_ok
 from app.errors import ApiError
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+# Batas request HTTP yang diproses bersamaan (M9-03). get_db mengambil koneksi di satu giliran
+# thread dan handler berjalan di giliran berikutnya; tanpa batas, lonjakan > pool + thread (40+40)
+# membuat semua koneksi dipegang request yang menunggu thread, sementara semua thread menunggu
+# koneksi -> macet sampai timeout. 24 < pool (40) & thread AnyIO (40), sisanya untuk WebSocket
+# monitor, sweeper, dan backup. Request di atas batas mengantre di event loop (FIFO), murah.
+MAX_INFLIGHT = 24
+_inflight = asyncio.Semaphore(MAX_INFLIGHT)
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
 
@@ -161,7 +169,8 @@ async def request_id_and_access_log(
             # Lapis kedua CSRF (juga melindungi /auth/login yang belum punya token CSRF).
             response = error_response(403, "ORIGIN_REJECTED", "Asal permintaan tidak diizinkan.")
         else:
-            response = await call_next(request)
+            async with _inflight:
+                response = await call_next(request)
     except Exception:
         log.exception("unhandled error")
         response = JSONResponse(

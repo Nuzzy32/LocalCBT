@@ -35,6 +35,29 @@ jobs:
       - run: uv run pytest -q
         env:
           LOCALCBT_PG_BIN_DIR: /usr/lib/postgresql/16/bin
+      # M9-03: 30 siswa serentak di 2 ujian terhadap uvicorn sungguhan (target P95 PRD §3.2,
+      # integritas jawaban, tanpa deadlock pool/thread). Laporan JSON diunggah sebagai artifact.
+      - name: Uji beban singkat
+        env:
+          LOCALCBT_DATABASE_URL: postgresql+psycopg://localcbt:localcbt-dev@127.0.0.1:5432/localcbt_load
+          LOCALCBT_COOKIE_SECURE: "false"
+          LOCALCBT_ALLOWED_ORIGINS: '["http://127.0.0.1:8100"]'
+          LOCALCBT_BACKUP_SCHEDULER_ENABLED: "false"
+          LOCALCBT_LOG_LEVEL: WARNING
+          PGPASSWORD: localcbt-dev
+        run: |
+          /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -U localcbt localcbt_load
+          uv run alembic upgrade head
+          uv run uvicorn app.main:app --port 8100 --timeout-keep-alive 75 --no-access-log &
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8100/api/v1/healthz && break; sleep 1; done
+          uv run python loadtest.py seed --confirm-db localcbt_load --base-url http://127.0.0.1:8100 --questions 20
+          uv run python loadtest.py run --think 0.5
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: loadtest-report
+          path: services/api/loadtest-report-*.json
+          if-no-files-found: ignore
       # Migrasi harus idempotent (M1 DoD)
       - run: uv run alembic upgrade head && uv run alembic upgrade head
       - run: uv run --with pip-audit pip-audit

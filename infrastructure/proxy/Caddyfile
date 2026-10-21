@@ -10,6 +10,11 @@
 		# Uvicorn hanya listen di 127.0.0.1; reverse_proxy meneruskan WebSocket otomatis.
 		reverse_proxy {$LOCALCBT_API:127.0.0.1:8000} {
 			header_up X-Request-ID {http.request.uuid}
+			# Koneksi menganggur ditutup proxy LEBIH DULU (30 dtk) daripada uvicorn (75 dtk):
+			# kebalikannya membuat POST (mis. submit serentak) gagal 502 di koneksi basi (M9-03).
+			transport http {
+				keepalive 30s
+			}
 		}
 	}
 

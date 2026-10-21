@@ -234,3 +234,29 @@ Tambahkan `--json` sebelum nama perintah untuk keluaran mesin.
 | `LOCALCBT_MEDIA_DIR` | `data/media` | Gambar soal |
 
 Mengubah `.env` perlu **Restart** service agar berlaku.
+
+## 11. Uji beban sebelum pilot (M9-03)
+
+Membuktikan server dan Wi-Fi sekolah sanggup melayani ujian serentak. Lakukan di luar jam ujian,
+**jangan di database asli**: script membuat 30 akun siswa uji (awalan `lt.`) dan 2 ujian.
+
+1. **Database uji.** Tab **Backup & Restore** → pilih backup → **Restore…**, isi nama database
+   `localcbt_load`, **jangan** centang *Alihkan service*. Lalu ubah sementara
+   `LOCALCBT_DATABASE_URL` di `.env` ke `localcbt_load` dan **Restart** service.
+2. **Seed** di server (folder `services/api`):
+   ```bash
+   uv run --with httpx python loadtest.py seed --confirm-db localcbt_load --base-url https://<portal>
+   ```
+   Data akun uji tersimpan di `.loadtest.json` (rahasia, jangan dibagikan).
+3. **Jalankan** dari **laptop lain yang tersambung ke SSID ujian** (salin folder `services/api`
+   beserta `.loadtest.json`, perlu `uv`; `--with httpx` karena instalasi server tanpa paket dev):
+   ```bash
+   uv run --with httpx python loadtest.py run
+   ```
+   Selama berjalan, pantau tab **Ringkasan** Control Center (CPU/RAM/disk).
+4. Hasil **LULUS** bila simpan jawaban P95 ≤ 1,5 detik, API lain P95 ≤ 2 detik, 0 error, dan
+   0 jawaban hilang. Simpan berkas `loadtest-report-*.json` untuk dokumentasi pilot.
+5. **Kembalikan** `LOCALCBT_DATABASE_URL` ke database asli (salinan ada di `.env.bak-*`
+   bila memakai restore --switch), lalu **Restart**. Database `localcbt_load` boleh dihapus.
+
+Hasil uji di mesin pengembangan: [docs/evidence/M9-03_LOAD_TEST.md](evidence/M9-03_LOAD_TEST.md).

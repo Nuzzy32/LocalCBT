@@ -7,7 +7,7 @@
   <description>LocalCBT: server ujian lokal (FastAPI).</description>
   <workingdirectory>%BASE%\..\..\services\api</workingdirectory>
   <executable>%BASE%\..\..\services\api\.venv\Scripts\uvicorn.exe</executable>
-  <arguments>app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log</arguments>
+  <arguments>app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1 --timeout-keep-alive 75 --no-access-log</arguments>
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>
   <depend>postgresql-x64-16</depend>

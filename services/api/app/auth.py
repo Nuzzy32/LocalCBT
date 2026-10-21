@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import os
 import secrets
 import threading
 import time
@@ -30,13 +31,20 @@ _DUMMY_HASH = _ph.hash(secrets.token_urlsafe(16))
 _PW_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 
+# Argon2 memakai 64 MiB per hash. Tanpa batas, login serentak (40 thread) = ~2,5 GB RAM
+# sekaligus di server sekolah. Dibatasi per jumlah core: sisanya antre sebentar.
+_hash_slots = threading.BoundedSemaphore(max(2, os.cpu_count() or 2))
+
+
 def hash_password(password: str) -> str:
-    return _ph.hash(password)
+    with _hash_slots:
+        return _ph.hash(password)
 
 
 def verify_password(password_hash: str, password: str) -> bool:
     try:
-        return _ph.verify(password_hash, password)
+        with _hash_slots:
+            return _ph.verify(password_hash, password)
     except (VerificationError, InvalidHashError):
         return False
 

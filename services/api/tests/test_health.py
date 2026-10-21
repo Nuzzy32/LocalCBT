@@ -29,3 +29,22 @@ def test_request_id_generated_and_unsafe_one_replaced() -> None:
 
     r = client.get("/api/v1/healthz", headers={"X-Request-ID": "abc12345-proxy"})
     assert r.headers["X-Request-ID"] == "abc12345-proxy"
+
+
+def test_inflight_limit_leaves_headroom_against_pool_thread_deadlock() -> None:
+    # M9-03: request yang diproses bersamaan harus < pool koneksi & < thread AnyIO, dengan sisa
+    # untuk WebSocket monitor, sweeper, dan backup. Kalau tidak, lonjakan login membuat API macet.
+    import anyio
+    import anyio.to_thread
+
+    from app.db import engine
+    from app.main import MAX_INFLIGHT
+
+    pool_max = engine.pool.size() + engine.pool._max_overflow  # type: ignore[attr-defined]
+
+    async def tokens() -> float:
+        return anyio.to_thread.current_default_thread_limiter().total_tokens
+
+    threads = anyio.run(tokens)
+    assert MAX_INFLIGHT + 8 <= pool_max
+    assert MAX_INFLIGHT + 8 <= threads

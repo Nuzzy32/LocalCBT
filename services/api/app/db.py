@@ -8,9 +8,14 @@ from sqlalchemy import Connection, create_engine, text
 
 from app.config import settings
 
+# Satu koneksi per request (get_db) selama handler berjalan. Pool = jumlah thread worker
+# AnyIO (40) agar request tidak mengantre koneksi; default 5+10 membuat login serentak
+# timeout pada uji beban M9-03. 40 koneksi aman untuk max_connections Postgres default (100).
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=30,
     connect_args={"connect_timeout": 2},
 )
 
