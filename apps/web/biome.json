@@ -4,7 +4,7 @@
 		"enabled": false
 	},
 	"files": {
-		"includes": ["**", "!dist"]
+		"includes": ["**", "!dist", "!e2e/.tmp"]
 	},
 	"formatter": {
 		"enabled": true,

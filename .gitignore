@@ -31,3 +31,5 @@ infrastructure/windows/*.generated.xml
 .loadtest.json
 loadtest-report-*.json
 .chaos.json
+.worktrees/
+apps/web/e2e/.tmp/

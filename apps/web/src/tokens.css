@@ -468,6 +468,8 @@ legend {
 	margin-top: 4px;
 }
 .dialog {
+	/* Lebar termasuk padding: lembar nomor soal (width 100%) tidak melewati layar 360px. */
+	box-sizing: border-box;
 	max-width: 560px;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-card);

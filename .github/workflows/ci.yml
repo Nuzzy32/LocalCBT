@@ -100,6 +100,47 @@ jobs:
       - run: pnpm build
       - run: pnpm audit --prod
 
+  # M9-01: regresi E2E lewat browser (desktop, iPhone/WebKit, Android 360px), axe WCAG 2.2 AA,
+  # touch target 44px, keyboard-only, antrean offline. Laporan + screenshot diunggah sebagai artifact.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: localcbt
+          POSTGRES_PASSWORD: localcbt-dev
+          POSTGRES_DB: localcbt
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: uv sync --locked
+        working-directory: services/api
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/web
+      - run: pnpm exec playwright install --with-deps chromium webkit
+        working-directory: apps/web
+      - run: pnpm e2e
+        working-directory: apps/web
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-report
+          path: apps/web/e2e/.tmp/
+          if-no-files-found: ignore
+
   control-center:
     runs-on: ubuntu-latest
     defaults:

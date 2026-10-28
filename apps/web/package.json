@@ -7,14 +7,17 @@
 		"dev": "vite",
 		"build": "tsc -b && vite build",
 		"typecheck": "tsc -b",
-		"lint": "biome ci ."
+		"lint": "biome ci .",
+		"e2e": "playwright test"
 	},
 	"dependencies": {
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1"
 	},
 	"devDependencies": {
+		"@axe-core/playwright": "4.14.0",
 		"@biomejs/biome": "^2.5.15",
+		"@playwright/test": "1.64.1",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
 		"@vitejs/plugin-react": "^6.1.2",

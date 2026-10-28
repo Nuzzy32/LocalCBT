@@ -35,6 +35,15 @@ x-realtime-contract:
     → close 1008. Origin/cookie/hak tidak valid → ditolak sebelum accept. Tanpa jawaban, kunci,
     maupun nilai.
 paths:
+  /healthz:
+    get:
+      tags: [Operations]
+      summary: Liveness tanpa login (installer, Control Center); detail lengkap di /ops/health
+      operationId: healthz
+      security: []
+      responses:
+        '200': {description: '{"server_status": "OK", "database_status": "OK"}'}
+        '503': {description: Database tidak terjangkau}
   /auth/login:
     post:
       tags: [Authentication]
@@ -1230,6 +1239,37 @@ paths:
       x-roles: [ADMIN]
       responses:
         '200': {description: Daftar staf tanpa password hash}
+  /admin/students:
+    get:
+      tags: [Academic Admin]
+      summary: Cari satu siswa berdasarkan NIS (untuk reset kata sandi)
+      operationId: findStudent
+      x-roles: [ADMIN]
+      parameters:
+        - {name: nis, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Siswa ditemukan
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, nis, display_name]
+                properties:
+                  id: {$ref: '#/components/schemas/Id'}
+                  nis: {type: string}
+                  display_name: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /admin/interventions:
+    get:
+      tags: [Academic Admin]
+      summary: Riwayat intervensi siswa di semua ujian (reset sesi, pindah perangkat, tambah waktu, reset kata sandi; 500 terbaru)
+      operationId: listInterventions
+      x-roles: [ADMIN]
+      responses:
+        '200': {description: Daftar intervensi, terbaru dulu}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /admin/students/{studentId}/password-reset:
     post:
       tags: [Academic Admin]

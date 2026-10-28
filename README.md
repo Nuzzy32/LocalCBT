@@ -36,6 +36,7 @@ Cek sebelum PR (sama dengan CI):
 ```bash
 cd services/api && uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest -q
 cd apps/web && pnpm lint && pnpm build
+cd apps/web && pnpm e2e   # regresi browser + aksesibilitas + ponsel (butuh DB dev; sekali: pnpm exec playwright install chromium webkit)
 cd apps/control-center && uv run ruff check . && uv run pytest -q
 ```
 

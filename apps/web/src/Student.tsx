@@ -993,8 +993,13 @@ function Done({ attemptId }: { attemptId: string }) {
 		)
 			.then(setResult)
 			.catch((err) => setResult(message(err)));
-		document.querySelector<HTMLElement>("#h-done")?.focus();
 	}, [attemptId]);
+
+	// Judul baru ada setelah attempt termuat; fokus ke sana agar pembaca layar mengumumkannya.
+	const loaded = attempt !== null;
+	useEffect(() => {
+		if (loaded) document.querySelector<HTMLElement>("#h-done")?.focus();
+	}, [loaded]);
 
 	async function openReview() {
 		try {
