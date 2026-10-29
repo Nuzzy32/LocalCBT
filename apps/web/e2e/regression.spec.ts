@@ -113,13 +113,14 @@ test("guru: bank soal dengan tiga jenis soal", async () => {
 	await baru.getByRole("button", { name: "Buat bank" }).click();
 	await expect(page.getByRole("heading", { name: "Bank E2E" })).toBeVisible();
 
+	let count = 0;
 	const add = async (fill: () => Promise<void>) => {
 		await page.getByRole("button", { name: "Tambah soal" }).click();
 		await fill();
 		await page.getByRole("button", { name: "Simpan soal" }).click();
-		await expect(
-			page.getByRole("button", { name: "Simpan soal" }),
-		).toBeHidden();
+		// Tunggu simpan selesai (jumlah soal naik), bukan tombolnya: selama menyimpan labelnya
+		// "Menyimpan…" sehingga "Simpan soal" sudah tak terlihat (race di runner CI yang lambat).
+		await expect(page.getByText(`· ${++count} soal ·`)).toBeVisible();
 	};
 	await add(async () => {
 		await page.getByLabel("Pertanyaan").fill("Ibu kota Indonesia adalah …");

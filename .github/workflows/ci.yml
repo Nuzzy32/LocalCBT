@@ -139,6 +139,7 @@ jobs:
         with:
           name: e2e-report
           path: apps/web/e2e/.tmp/
+          include-hidden-files: true # .tmp diawali titik; tanpa ini tidak ada yang diunggah
           if-no-files-found: ignore
 
   control-center:
