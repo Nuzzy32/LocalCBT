@@ -14,6 +14,7 @@ CBT ujian sekolah yang berjalan penuh di LAN. Spesifikasi: [`docs/`](docs/).
 
 Panduan pengguna: [admin/operator](docs/ADMIN_GUIDE.md), [guru](docs/TEACHER_QUICKSTART.md),
 [pengawas](docs/PROCTOR_SOP.md). Kebutuhan produk: [`docs/PRD.docx`](docs/PRD.docx).
+Lembar kunjungan sekolah (Gate 0 & pilot): [`docs/gate0/`](docs/gate0/).
 
 ## Development
 
